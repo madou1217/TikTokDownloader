@@ -12,7 +12,7 @@ from .account import Account, AccountTiktok
 from .comment import Comment
 from .reply import Reply
 from .mix import Mix, MixTikTok
-from .live import Live, LiveTikTok
+from .live import AccountLive, Live, LiveTikTok
 
 __all__ = (
     "GeneralSearch",
@@ -31,6 +31,7 @@ __all__ = (
     "Reply",
     "Mix",
     "MixTikTok",
+    "AccountLive",
     "Live",
     "LiveTikTok",
 )

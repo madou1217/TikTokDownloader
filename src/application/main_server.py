@@ -15,6 +15,7 @@ from ..custom import (
 )
 from ..models import (
     Account,
+    AccountLive,
     AccountTiktok,
     Comment,
     DataResponse,
@@ -237,6 +238,28 @@ class APIServer(TikTok):
             extract: Account, token: str = Depends(token_dependency)
         ):
             return await self.handle_account(extract, False)
+
+        @self.server.post(
+            "/douyin/account/live",
+            summary=_("查询账号直播状态与直播间数据"),
+            description=_(
+                dedent("""
+                **参数**:
+                
+                - **cookie**: 抖音 Cookie；可选参数
+                - **proxy**: 代理；可选参数
+                - **source**: 是否返回原始响应数据；可选参数，默认值：False
+                - **dump_html**: 是否保存原始 HTML 到本地；可选参数，默认值：True
+                - **sec_user_id**: 抖音账号 sec_uid；必需参数
+                """)
+            ),
+            tags=[_("抖音")],
+            response_model=DataResponse,
+        )
+        async def handle_account_live(
+            extract: AccountLive, token: str = Depends(token_dependency)
+        ):
+            return await self.handle_account_live(extract)
 
         @self.server.post(
             "/douyin/mix",
@@ -698,6 +721,51 @@ class APIServer(TikTok):
         ):
             return self.success_response(extract, data)
         return self.failed_response(extract)
+
+    async def handle_account_live(
+        self,
+        extract: AccountLive,
+    ):
+        live_info = await self.get_account_live_status(
+            extract.sec_user_id,
+            cookie=extract.cookie,
+            proxy=extract.proxy,
+            dump_html=extract.dump_html,
+        )
+        if not live_info:
+            return self.failed_response(extract)
+        web_rid = live_info.get("web_rid") or None
+        room_id = live_info.get("room_id") or None
+        if not live_info.get("live_status") or (not room_id and not web_rid):
+            live_info["room"] = None
+            return self.success_response(extract, live_info)
+        room_data = await self.get_live_data(
+            web_rid=web_rid,
+            room_id=room_id,
+            sec_user_id=extract.sec_user_id,
+            cookie=extract.cookie,
+            proxy=extract.proxy,
+        )
+        if not room_data and room_id and web_rid:
+            room_data = await self.get_live_data(
+                room_id=room_id,
+                sec_user_id=extract.sec_user_id,
+                cookie=extract.cookie,
+                proxy=extract.proxy,
+            )
+        if not room_data:
+            live_info["room"] = None
+            return self.success_response(extract, live_info)
+        if extract.source:
+            live_info["room"] = room_data
+            return self.success_response(extract, live_info)
+        room_list = await self.extractor.run(
+            [room_data],
+            None,
+            "live",
+        )
+        live_info["room"] = room_list[0] if room_list else None
+        return self.success_response(extract, live_info)
 
     @staticmethod
     def success_response(

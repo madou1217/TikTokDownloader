@@ -14,6 +14,7 @@ from ..extract import Extractor
 from ..interface import (
     API,
     Account,
+    AccountLive,
     AccountTikTok,
     Collection,
     # CommentTikTok,
@@ -1132,6 +1133,21 @@ class TikTok:
             web_rid,
             room_id,
             sec_user_id,
+        ).run()
+
+    async def get_account_live_status(
+        self,
+        sec_user_id: str,
+        cookie: str = None,
+        proxy: str = None,
+        dump_html: bool = False,
+    ):
+        return await AccountLive(
+            self.parameter,
+            sec_user_id=sec_user_id,
+            cookie=cookie or "",
+            proxy=proxy,
+            dump_html=dump_html,
         ).run()
 
     async def get_live_data_tiktok(
