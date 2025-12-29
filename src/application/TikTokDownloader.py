@@ -405,14 +405,17 @@ class TikTokDownloader:
             self.run_command = self.parameter.run_command.copy()
         self.parameter.CLEANER.set_rule(TEXT_REPLACEMENT, True)
 
-    async def run(self):
+    async def run(self, mode: str | None = None):
         self.project_info()
         self.check_config()
         await self.check_settings(
             False,
         )
         if await self.disclaimer():
-            await self.main_menu(safe_pop(self.run_command))
+            if mode:
+                await self.main_menu(mode)
+            else:
+                await self.main_menu(safe_pop(self.run_command))
 
     def periodic_update_params(self):
         async def inner():
