@@ -550,6 +550,7 @@ class TikTok:
         cookie: str = None,
         proxy: str = None,
         tiktok=False,
+        return_meta: bool = False,
         *args,
         **kwargs,
     ):
@@ -584,7 +585,7 @@ class TikTok:
                 )
             )
         acquirer = self._get_account_data_tiktok if tiktok else self._get_account_data
-        account_data, earliest, latest = await acquirer(
+        account_data, earliest, latest, cookie_invalid, empty_data = await acquirer(
             cookie=cookie,
             proxy=proxy,
             sec_user_id=sec_user_id,
@@ -595,15 +596,26 @@ class TikTok:
             **kwargs,
         )
         if not any(account_data):
+            if return_meta:
+                return None, {
+                    "cookie_invalid": cookie_invalid,
+                    "empty_data": empty_data,
+                }
             return None
         if source:
-            return self.extractor.source_date_filter(
+            data = self.extractor.source_date_filter(
                 account_data,
                 earliest,
                 latest,
                 tiktok,
             )
-        return await self._batch_process_detail(
+            if return_meta:
+                return data, {
+                    "cookie_invalid": cookie_invalid,
+                    "empty_data": empty_data,
+                }
+            return data
+        data = await self._batch_process_detail(
             account_data,
             user_id=sec_user_id,
             mark=mark,
@@ -614,6 +626,12 @@ class TikTok:
             mode=tab,
             info=info,
         )
+        if return_meta:
+            return data, {
+                "cookie_invalid": cookie_invalid,
+                "empty_data": empty_data,
+            }
+        return data
 
     async def _get_account_data(
         self,
@@ -627,7 +645,7 @@ class TikTok:
         *args,
         **kwargs,
     ):
-        return await Account(
+        account = Account(
             self.parameter,
             cookie,
             proxy,
@@ -636,7 +654,9 @@ class TikTok:
             earliest,
             latest,
             pages,
-        ).run()
+        )
+        data, earliest_, latest_ = await account.run()
+        return data, earliest_, latest_, account.cookie_invalid, account.empty_data
 
     async def _get_account_data_tiktok(
         self,
@@ -650,7 +670,7 @@ class TikTok:
         *args,
         **kwargs,
     ):
-        return await AccountTikTok(
+        account = AccountTikTok(
             self.parameter,
             cookie,
             proxy,
@@ -659,7 +679,9 @@ class TikTok:
             earliest,
             latest,
             pages,
-        ).run()
+        )
+        data, earliest_, latest_ = await account.run()
+        return data, earliest_, latest_, account.cookie_invalid, account.empty_data
 
     async def get_user_info_data(
         self,

@@ -39,6 +39,8 @@ class Account(API):
         self.cursor = cursor
         self.count = count
         self.text = _("账号喜欢作品") if self.favorite else _("账号发布作品")
+        self.cookie_invalid = False
+        self.empty_data = False
 
     async def run(
         self,
@@ -248,22 +250,34 @@ class Account(API):
         *args,
         **kwargs,
     ):
-        try:
-            if not (d := data_dict[data_key]):
-                self.log.warning(error_text)
-                self.finished = True
-            else:
-                self.cursor = data_dict[cursor]
-                self.append_response(d)
-                self.finished = not data_dict[has_more]
-        except KeyError:
+        if not isinstance(data_dict, dict):
+            self.finished = True
+            return
+        if data_key not in data_dict:
             if data_dict.get("status_code") == 0:
+                self.cookie_invalid = True
                 self.log.warning(_("配置文件 cookie 参数未登录，数据获取已提前结束"))
             else:
                 self.log.error(
                     _("数据解析失败，请告知作者处理: {data}").format(data=data_dict)
                 )
             self.finished = True
+            return
+        d = data_dict.get(data_key)
+        if not d:
+            self.empty_data = True
+            self.log.warning(error_text)
+            self.finished = True
+            return
+        if cursor not in data_dict or has_more not in data_dict:
+            self.log.error(
+                _("数据解析失败，请告知作者处理: {data}").format(data=data_dict)
+            )
+            self.finished = True
+            return
+        self.cursor = data_dict[cursor]
+        self.append_response(d)
+        self.finished = not data_dict[has_more]
 
 
 async def test():

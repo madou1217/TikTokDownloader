@@ -13,6 +13,21 @@ from .comment import Comment
 from .reply import Reply
 from .mix import Mix, MixTikTok
 from .live import AccountLive, Live, LiveTikTok
+from .admin import (
+    DouyinUserCreate,
+    DouyinUser,
+    DouyinUserPage,
+    DouyinUserSettingsUpdate,
+    DouyinCookieCreate,
+    DouyinCookieClipboardCreate,
+    DouyinCookieBrowserCreate,
+    DouyinCookie,
+    DouyinWork,
+    DouyinWorkPage,
+    DouyinDailyWorkPage,
+    DouyinWorkListPage,
+    DouyinScheduleSetting,
+)
 
 __all__ = (
     "GeneralSearch",
@@ -34,4 +49,17 @@ __all__ = (
     "AccountLive",
     "Live",
     "LiveTikTok",
+    "DouyinUserCreate",
+    "DouyinUser",
+    "DouyinUserPage",
+    "DouyinUserSettingsUpdate",
+    "DouyinCookieCreate",
+    "DouyinCookieClipboardCreate",
+    "DouyinCookieBrowserCreate",
+    "DouyinCookie",
+    "DouyinWork",
+    "DouyinWorkPage",
+    "DouyinDailyWorkPage",
+    "DouyinWorkListPage",
+    "DouyinScheduleSetting",
 )

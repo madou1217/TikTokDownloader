@@ -1,8 +1,17 @@
+import asyncio
+import re
+from datetime import datetime, time
+from hashlib import sha256
+import json
+from pathlib import Path
 from textwrap import dedent
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, Header, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi.responses import RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
+from pyperclip import paste
 from uvicorn import Config, Server
 
 from ..custom import (
@@ -14,13 +23,26 @@ from ..custom import (
     is_valid_token,
 )
 from ..models import (
-    Account,
+    Account as AccountPayload,
     AccountLive,
     AccountTiktok,
     Comment,
     DataResponse,
     Detail,
     DetailTikTok,
+    DouyinCookie,
+    DouyinCookieBrowserCreate,
+    DouyinCookieClipboardCreate,
+    DouyinCookieCreate,
+    DouyinUser,
+    DouyinUserCreate,
+    DouyinUserPage,
+    DouyinUserSettingsUpdate,
+    DouyinWork,
+    DouyinWorkPage,
+    DouyinDailyWorkPage,
+    DouyinWorkListPage,
+    DouyinScheduleSetting,
     GeneralSearch,
     Live,
     LiveSearch,
@@ -34,6 +56,9 @@ from ..models import (
     UserSearch,
     VideoSearch,
 )
+from ..interface import Account as AccountFetcher
+from ..module import Cookie
+from ..tools import Browser, cookie_dict_to_str
 from ..translation import _
 from .main_terminal import TikTok
 
@@ -53,6 +78,9 @@ def token_dependency(token: str = Header(None)):
 
 
 class APIServer(TikTok):
+    USER_FETCH_TIMEOUT = 20
+    DEFAULT_SCHEDULE_TIMES = ("09:30", "15:30", "21:00")
+
     def __init__(
         self,
         parameter: "Parameter",
@@ -65,6 +93,620 @@ class APIServer(TikTok):
             server_mode,
         )
         self.server = None
+        self._schedule_task = None
+        self._schedule_last_key = ""
+        self._douyin_live_cache = {}
+        self._debug_account_dumped = set()
+
+    @staticmethod
+    def _hash_cookie(cookie: str) -> str:
+        return sha256(cookie.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _mask_cookie(cookie: str) -> str:
+        if not cookie:
+            return ""
+        if len(cookie) <= 12:
+            return "*" * len(cookie)
+        return f"{cookie[:6]}...{cookie[-4:]}"
+
+    @classmethod
+    def _extract_first_url(cls, value) -> str:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            url_list = value.get("url_list")
+            if isinstance(url_list, list) and url_list:
+                return str(url_list[0])
+            url = value.get("url")
+            if isinstance(url, str):
+                return url
+        if isinstance(value, list) and value:
+            return cls._extract_first_url(value[0])
+        return ""
+
+    @classmethod
+    def _extract_author_profile(cls, item: dict) -> dict:
+        author = item.get("author") if isinstance(item, dict) else None
+        if not isinstance(author, dict):
+            return {"uid": "", "nickname": "", "avatar": "", "cover": ""}
+        avatar = ""
+        for key in ("avatar_larger", "avatar_medium", "avatar_thumb"):
+            avatar = cls._extract_first_url(author.get(key))
+            if avatar:
+                break
+        return {
+            "uid": author.get("uid") or author.get("id") or "",
+            "nickname": author.get("nickname", ""),
+            "avatar": avatar,
+            "cover": cls._extract_first_url(author.get("cover_url")),
+        }
+
+    @classmethod
+    def _extract_work_cover(cls, item: dict) -> str:
+        video = item.get("video") if isinstance(item, dict) else None
+        if not isinstance(video, dict):
+            return ""
+        for key in ("cover", "origin_cover", "dynamic_cover"):
+            url = cls._extract_first_url(video.get(key))
+            if url:
+                return url
+        return ""
+
+    @staticmethod
+    def _extract_play_count(item: dict) -> int:
+        stats = item.get("statistics") if isinstance(item, dict) else None
+        if not isinstance(stats, dict):
+            return 0
+        value = stats.get("play_count") or stats.get("playCount") or 0
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    @classmethod
+    def _is_video_item(cls, item: dict) -> bool:
+        if not isinstance(item, dict):
+            return False
+        if (
+            item.get("images")
+            or item.get("image_infos")
+            or item.get("image_post_info")
+            or item.get("is_image")
+        ):
+            return False
+        video = item.get("video")
+        if not isinstance(video, dict):
+            return False
+        if cls._extract_first_url(video.get("play_addr")):
+            return True
+        if cls._extract_first_url(video.get("play_addr_h264")):
+            return True
+        if cls._extract_first_url(video.get("play_addr_bytevc1")):
+            return True
+        if cls._extract_first_url(video.get("play_url")):
+            return True
+        return False
+
+    def _debug_dump_account_data(self, sec_user_id: str, data: list[dict]) -> None:
+        if not sec_user_id or not data:
+            return
+        if sec_user_id in self._debug_account_dumped:
+            return
+        self._debug_account_dumped.add(sec_user_id)
+        cache_dir = Path(__file__).resolve().parent.parent.parent.joinpath("Cache")
+        cache_dir.mkdir(exist_ok=True)
+        payload = {
+            "sec_user_id": sec_user_id,
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "count": len(data),
+            "sample": data[0],
+        }
+        path = cache_dir.joinpath("admin_account_sample.json")
+        try:
+            path.write_text(
+                json.dumps(payload, ensure_ascii=True, indent=2),
+                encoding="utf-8",
+            )
+        except OSError:
+            return
+
+    @staticmethod
+    def _normalize_user_row(row: dict) -> dict:
+        if not row:
+            return {}
+        return {
+            "id": row.get("id", 0),
+            "sec_user_id": row.get("sec_user_id", ""),
+            "uid": row.get("uid", ""),
+            "nickname": row.get("nickname", ""),
+            "avatar": row.get("avatar", ""),
+            "cover": row.get("cover", ""),
+            "has_works": bool(row.get("has_works", 0)),
+            "status": row.get("status", "unknown"),
+            "is_live": bool(row.get("is_live", 0)),
+            "has_new_today": bool(row.get("has_new_today", 0)),
+            "auto_update": bool(row.get("auto_update", 0)),
+            "update_window_start": row.get("update_window_start", ""),
+            "update_window_end": row.get("update_window_end", ""),
+            "last_live_at": row.get("last_live_at", ""),
+            "last_new_at": row.get("last_new_at", ""),
+            "last_fetch_at": row.get("last_fetch_at", ""),
+            "created_at": row.get("created_at", ""),
+            "updated_at": row.get("updated_at", ""),
+        }
+
+    def _normalize_cookie_row(self, row: dict) -> dict:
+        if not row:
+            return {}
+        return {
+            "id": row.get("id", 0),
+            "account": row.get("account", ""),
+            "cookie_masked": self._mask_cookie(row.get("cookie", "")),
+            "status": row.get("status", "active"),
+            "fail_count": row.get("fail_count", 0),
+            "last_used_at": row.get("last_used_at", ""),
+            "last_failed_at": row.get("last_failed_at", ""),
+            "created_at": row.get("created_at", ""),
+            "updated_at": row.get("updated_at", ""),
+        }
+
+    @staticmethod
+    def _read_clipboard_cookie() -> str:
+        try:
+            return (paste() or "").strip()
+        except Exception:
+            return ""
+
+    def _read_browser_cookie(self, browser: str) -> dict[str, str]:
+        reader = Browser(self.parameter, self.parameter.cookie_object)
+        return reader.get(browser, Browser.PLATFORM[False].domain)
+
+    async def _save_douyin_cookie(self, account: str, cookie: str) -> DouyinCookie:
+        cookie_value = (cookie or "").strip()
+        if not Cookie.validate_cookie_minimal(cookie_value):
+            raise HTTPException(status_code=400, detail=_("Cookie 格式无效"))
+        record = await self.database.upsert_douyin_cookie(
+            account,
+            cookie_value,
+            self._hash_cookie(cookie_value),
+        )
+        return DouyinCookie(**self._normalize_cookie_row(record))
+
+    @staticmethod
+    def _format_timestamp(ts: int) -> str:
+        if not ts:
+            return ""
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+
+    @staticmethod
+    def _today_str() -> str:
+        return datetime.now().strftime("%Y-%m-%d")
+
+    @staticmethod
+    def _parse_time(value: str) -> time | None:
+        if not value:
+            return None
+        parts = value.split(":", 1)
+        if len(parts) != 2:
+            return None
+        try:
+            return time(int(parts[0]), int(parts[1]))
+        except ValueError:
+            return None
+
+    @classmethod
+    def _within_window(cls, start: str, end: str, now_time: time) -> bool:
+        start_time = cls._parse_time(start)
+        end_time = cls._parse_time(end)
+        if not start_time or not end_time:
+            return True
+        if start_time <= end_time:
+            return start_time <= now_time <= end_time
+        return now_time >= start_time or now_time <= end_time
+
+    @staticmethod
+    def _format_schedule_times(times: list[str]) -> str:
+        if not times:
+            return ""
+        return ", ".join(times)
+
+    @classmethod
+    def _parse_schedule_times_text(cls, value: str) -> list[str]:
+        if not value:
+            return []
+        matches = re.findall(r"(\d{1,2})\s*:\s*(\d{2})", value)
+        times = []
+        seen = set()
+        for hour_str, minute_str in matches:
+            try:
+                hour = int(hour_str)
+                minute = int(minute_str)
+            except ValueError:
+                continue
+            if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+                continue
+            key = f"{hour:02d}:{minute:02d}"
+            if key in seen:
+                continue
+            seen.add(key)
+            times.append(key)
+        times.sort(key=lambda item: (int(item.split(":")[0]), int(item.split(":")[1])))
+        return times
+
+    @staticmethod
+    def _build_schedule_expression(times: list[str]) -> str:
+        if not times:
+            return ""
+        groups: dict[int, list[int]] = {}
+        for item in times:
+            hour_str, minute_str = item.split(":", 1)
+            groups.setdefault(int(minute_str), []).append(int(hour_str))
+        parts = []
+        for minute in sorted(groups):
+            hours = ",".join(str(h) for h in sorted(set(groups[minute])))
+            parts.append(f"{minute} {hours} * * *")
+        return " | ".join(parts)
+
+    def _resolve_schedule_setting(self, data: dict) -> dict:
+        enabled = True if not data else bool(data.get("enabled", 1))
+        times_text = (data.get("times_text") or "").strip()
+        times = self._parse_schedule_times_text(times_text)
+        if not times:
+            times = list(self.DEFAULT_SCHEDULE_TIMES)
+        times_text = self._format_schedule_times(times)
+        expression = self._build_schedule_expression(times)
+        return {
+            "enabled": enabled,
+            "times": times,
+            "times_text": times_text,
+            "expression": expression,
+        }
+
+    @classmethod
+    def _extract_work_brief(cls, item: dict, fallback_sec_user_id: str) -> dict:
+        aweme_id = item.get("aweme_id", "")
+        desc = item.get("desc", "") or aweme_id
+        create_ts = int(item.get("create_time") or 0)
+        create_date = (
+            datetime.fromtimestamp(create_ts).strftime("%Y-%m-%d")
+            if create_ts
+            else ""
+        )
+        author = item.get("author") or {}
+        return {
+            "sec_user_id": author.get("sec_uid", "") or fallback_sec_user_id,
+            "aweme_id": aweme_id,
+            "desc": desc,
+            "create_ts": create_ts,
+            "create_time": cls._format_timestamp(create_ts),
+            "create_date": create_date,
+            "nickname": author.get("nickname", ""),
+            "cover": cls._extract_work_cover(item),
+            "play_count": cls._extract_play_count(item),
+        }
+
+    def _build_work_from_row(self, row: dict) -> DouyinWork:
+        create_ts = int(row.get("create_ts") or 0)
+        return DouyinWork(
+            sec_user_id=row.get("sec_user_id", ""),
+            aweme_id=row.get("aweme_id", ""),
+            desc=row.get("desc", ""),
+            create_ts=create_ts,
+            create_time=self._format_timestamp(create_ts),
+            create_date=row.get("create_date", ""),
+            nickname=row.get("nickname", ""),
+            cover=row.get("cover", ""),
+            play_count=int(row.get("play_count") or 0),
+        )
+
+    async def _fetch_douyin_account_page(
+        self,
+        sec_user_id: str,
+        cookie: str,
+        cursor: int = 0,
+        count: int = 18,
+        proxy: str = None,
+    ) -> tuple[list[dict], int, bool, bool, bool]:
+        account = AccountFetcher(
+            self.parameter,
+            cookie,
+            proxy,
+            sec_user_id,
+            "post",
+            "",
+            "",
+            pages=1,
+            cursor=cursor,
+            count=count,
+        )
+        data = await account.run(single_page=True)
+        if data:
+            self._debug_dump_account_data(sec_user_id, data)
+        return (
+            data or [],
+            int(account.cursor or 0),
+            not account.finished,
+            account.cookie_invalid,
+            account.empty_data,
+        )
+
+    async def _fetch_douyin_account_page_with_pool(
+        self,
+        sec_user_id: str,
+        cursor: int = 0,
+        count: int = 18,
+        proxy: str = None,
+    ) -> tuple[list[dict], int, bool, int | None, bool, bool]:
+        cookies = await self.database.list_douyin_cookies(status="active")
+        if not cookies:
+            data, next_cursor, has_more, cookie_invalid, empty_data = (
+                await self._fetch_douyin_account_page(
+                    sec_user_id,
+                    "",
+                    cursor=cursor,
+                    count=count,
+                    proxy=proxy,
+                )
+            )
+            return data, next_cursor, has_more, None, cookie_invalid, empty_data
+        for item in cookies:
+            cookie_value = item.get("cookie", "")
+            try:
+                data, next_cursor, has_more, cookie_invalid, empty_data = (
+                    await asyncio.wait_for(
+                        self._fetch_douyin_account_page(
+                            sec_user_id,
+                            cookie_value,
+                            cursor=cursor,
+                            count=count,
+                            proxy=proxy,
+                        ),
+                        timeout=self.USER_FETCH_TIMEOUT,
+                    )
+                )
+            except asyncio.TimeoutError:
+                await self.database.mark_douyin_cookie_expired(item.get("id", 0))
+                continue
+            if cookie_invalid:
+                await self.database.mark_douyin_cookie_expired(item.get("id", 0))
+                continue
+            if data or empty_data:
+                return (
+                    data,
+                    next_cursor,
+                    has_more,
+                    item.get("id", 0),
+                    cookie_invalid,
+                    empty_data,
+                )
+        return [], 0, False, None, True, False
+
+    async def _fetch_douyin_account_data(
+        self,
+        extract: AccountPayload,
+    ) -> tuple[list[dict] | None, dict, int | None]:
+        if extract.cookie:
+            data, meta = await self.deal_account_detail(
+                0,
+                extract.sec_user_id,
+                tab=extract.tab,
+                earliest=extract.earliest,
+                latest=extract.latest,
+                pages=extract.pages,
+                api=True,
+                source=extract.source,
+                cookie=extract.cookie,
+                proxy=extract.proxy,
+                tiktok=False,
+                cursor=extract.cursor,
+                count=extract.count,
+                return_meta=True,
+            )
+            return data, meta, None
+        cookies = await self.database.list_douyin_cookies(status="active")
+        if not cookies:
+            data, meta = await self.deal_account_detail(
+                0,
+                extract.sec_user_id,
+                tab=extract.tab,
+                earliest=extract.earliest,
+                latest=extract.latest,
+                pages=extract.pages,
+                api=True,
+                source=extract.source,
+                cookie=extract.cookie,
+                proxy=extract.proxy,
+                tiktok=False,
+                cursor=extract.cursor,
+                count=extract.count,
+                return_meta=True,
+            )
+            return data, meta, None
+        for item in cookies:
+            data, meta = await self.deal_account_detail(
+                0,
+                extract.sec_user_id,
+                tab=extract.tab,
+                earliest=extract.earliest,
+                latest=extract.latest,
+                pages=extract.pages,
+                api=True,
+                source=extract.source,
+                cookie=item.get("cookie", ""),
+                proxy=extract.proxy,
+                tiktok=False,
+                cursor=extract.cursor,
+                count=extract.count,
+                return_meta=True,
+            )
+            if meta.get("cookie_invalid"):
+                await self.database.mark_douyin_cookie_expired(item.get("id", 0))
+                continue
+            return data, meta, item.get("id", 0)
+        return None, {"cookie_invalid": True, "empty_data": False}, None
+
+    async def _fetch_douyin_account_live(
+        self,
+        extract: AccountLive,
+    ) -> tuple[dict | None, int | None, str]:
+        if extract.cookie:
+            live_info = await self.get_account_live_status(
+                extract.sec_user_id,
+                cookie=extract.cookie,
+                proxy=extract.proxy,
+                dump_html=extract.dump_html,
+            )
+            return live_info, None, extract.cookie
+        cookies = await self.database.list_douyin_cookies(status="active")
+        if not cookies:
+            live_info = await self.get_account_live_status(
+                extract.sec_user_id,
+                cookie=extract.cookie,
+                proxy=extract.proxy,
+                dump_html=extract.dump_html,
+            )
+            return live_info, None, extract.cookie
+        for item in cookies:
+            cookie_value = item.get("cookie", "")
+            live_info = await self.get_account_live_status(
+                extract.sec_user_id,
+                cookie=cookie_value,
+                proxy=extract.proxy,
+                dump_html=extract.dump_html,
+            )
+            if not live_info:
+                await self.database.mark_douyin_cookie_expired(item.get("id", 0))
+                continue
+            return live_info, item.get("id", 0), cookie_value
+        return None, None, ""
+
+    def _cache_live_info(self, sec_user_id: str, live_info: dict) -> None:
+        if not sec_user_id or not live_info:
+            return
+        self._douyin_live_cache[sec_user_id] = live_info
+
+    def _get_cached_live_info(self, sec_user_id: str) -> dict | None:
+        return self._douyin_live_cache.get(sec_user_id)
+
+    async def _build_live_info(
+        self,
+        extract: AccountLive,
+    ) -> dict | None:
+        live_info, cookie_id, cookie_value = await self._fetch_douyin_account_live(
+            extract
+        )
+        if not live_info:
+            return None
+        if cookie_id:
+            await self.database.touch_douyin_cookie(cookie_id)
+        web_rid = live_info.get("web_rid") or None
+        room_id = live_info.get("room_id") or None
+        if not live_info.get("live_status") or (not room_id and not web_rid):
+            live_info["room"] = None
+            return live_info
+        room_data = await self.get_live_data(
+            web_rid=web_rid,
+            room_id=room_id,
+            sec_user_id=extract.sec_user_id,
+            cookie=cookie_value or extract.cookie,
+            proxy=extract.proxy,
+        )
+        if not room_data and room_id and web_rid:
+            room_data = await self.get_live_data(
+                room_id=room_id,
+                sec_user_id=extract.sec_user_id,
+                cookie=cookie_value or extract.cookie,
+                proxy=extract.proxy,
+            )
+        if not room_data:
+            live_info["room"] = None
+            return live_info
+        if extract.source:
+            live_info["room"] = room_data
+            return live_info
+        room_list = await self.extractor.run(
+            [room_data],
+            None,
+            "live",
+        )
+        live_info["room"] = room_list[0] if room_list else None
+        return live_info
+
+    async def _refresh_user_latest(self, sec_user_id: str) -> dict:
+        data, next_cursor, has_more, cookie_id, cookie_invalid, empty_data = await self._fetch_douyin_account_page_with_pool(
+            sec_user_id,
+            cursor=0,
+            count=18,
+        )
+        if cookie_id and (data or empty_data):
+            await self.database.touch_douyin_cookie(cookie_id)
+        video_items = [item for item in data if self._is_video_item(item)]
+        profile_source = video_items[0] if video_items else (data[0] if data else None)
+        if profile_source:
+            profile = self._extract_author_profile(profile_source)
+            await self.database.update_douyin_user_profile(
+                sec_user_id,
+                profile.get("uid", ""),
+                profile.get("nickname", ""),
+                profile.get("avatar", ""),
+                profile.get("cover", ""),
+            )
+        await self.database.update_douyin_user_fetch_time(sec_user_id)
+        works = [self._extract_work_brief(item, sec_user_id) for item in video_items]
+        today = self._today_str()
+        today_works = [item for item in works if item.get("create_date") == today]
+        inserted = await self.database.insert_douyin_works(today_works)
+        if today_works:
+            await self.database.update_douyin_user_new(sec_user_id, True)
+        return {
+            "items": today_works,
+            "inserted": inserted,
+            "total": len(today_works),
+        }
+
+    async def _refresh_user_live(self, sec_user_id: str) -> dict:
+        extract = AccountLive(
+            sec_user_id=sec_user_id,
+            dump_html=False,
+        )
+        live_info = await self._build_live_info(extract)
+        is_live = bool(live_info and live_info.get("live_status"))
+        await self.database.update_douyin_user_live(sec_user_id, is_live)
+        if live_info:
+            self._cache_live_info(sec_user_id, live_info)
+        return live_info or {}
+
+    async def _schedule_tick(self) -> None:
+        setting = self._resolve_schedule_setting(
+            await self.database.get_douyin_schedule()
+        )
+        if not setting.get("enabled"):
+            return
+        now = datetime.now()
+        current_time = now.strftime("%H:%M")
+        if current_time not in set(setting.get("times", [])):
+            return
+        current_key = now.strftime("%Y-%m-%d %H:%M")
+        if self._schedule_last_key == current_key:
+            return
+        self._schedule_last_key = current_key
+        users = await self.database.list_douyin_users_auto_update()
+        for user in users:
+            start = user.get("update_window_start", "")
+            end = user.get("update_window_end", "")
+            if not self._within_window(start, end, now.time()):
+                continue
+            await self._refresh_user_latest(user.get("sec_user_id", ""))
+            await self._refresh_user_live(user.get("sec_user_id", ""))
+
+    async def _run_schedule_loop(self) -> None:
+        while True:
+            await asyncio.sleep(30)
+            try:
+                await self._schedule_tick()
+            except Exception:
+                self.logger.error(_("计划任务执行异常"))
 
     async def handle_redirect(self, text: str, proxy: str = None) -> str:
         return await self.links.run(
@@ -102,6 +744,27 @@ class APIServer(TikTok):
         await server.serve()
 
     def setup_routes(self):
+        admin_root = (
+            Path(__file__).resolve().parent.parent.parent.joinpath("static", "admin")
+        )
+        if admin_root.exists():
+            self.server.mount(
+                "/admin-ui",
+                StaticFiles(directory=admin_root, html=True),
+                name="admin-ui",
+            )
+
+        @self.server.on_event("startup")
+        async def startup_schedule():
+            if not self._schedule_task:
+                self._schedule_task = asyncio.create_task(self._run_schedule_loop())
+
+        @self.server.on_event("shutdown")
+        async def shutdown_schedule():
+            if self._schedule_task:
+                self._schedule_task.cancel()
+                self._schedule_task = None
+
         @self.server.get(
             "/",
             summary=_("访问项目 GitHub 仓库"),
@@ -110,6 +773,31 @@ class APIServer(TikTok):
         )
         async def index():
             return RedirectResponse(url=REPOSITORY)
+
+        @self.server.get(
+            "/admin/douyin/media",
+            summary=_("代理获取抖音图片资源"),
+            tags=[_("管理")],
+            response_class=Response,
+        )
+        async def proxy_douyin_media(
+            url: str = Query(..., min_length=8),
+            token: str = Depends(token_dependency),
+        ):
+            parsed = urlparse(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise HTTPException(status_code=400, detail=_("无效资源地址"))
+            headers = {
+                "User-Agent": self.parameter.headers.get("User-Agent", ""),
+                "Referer": "https://www.douyin.com/",
+            }
+            try:
+                resp = await self.parameter.client.get(url, headers=headers)
+                resp.raise_for_status()
+            except Exception:
+                raise HTTPException(status_code=502, detail=_("图片获取失败"))
+            content_type = resp.headers.get("Content-Type") or "image/jpeg"
+            return Response(content=resp.content, media_type=content_type)
 
         @self.server.get(
             "/token",
@@ -161,6 +849,431 @@ class APIServer(TikTok):
         )
         async def get_settings(token: str = Depends(token_dependency)):
             return Settings(**self.parameter.get_settings_data())
+
+        @self.server.get(
+            "/admin/douyin/users",
+            summary=_("获取抖音用户列表"),
+            tags=[_("管理")],
+            response_model=list[DouyinUser],
+        )
+        async def list_douyin_users(token: str = Depends(token_dependency)):
+            rows = await self.database.list_douyin_users()
+            return [DouyinUser(**self._normalize_user_row(i)) for i in rows]
+
+        @self.server.get(
+            "/admin/douyin/users/paged",
+            summary=_("分页获取抖音用户列表"),
+            tags=[_("管理")],
+            response_model=DouyinUserPage,
+        )
+        async def list_douyin_users_paged(
+            page: int = 1,
+            page_size: int = 20,
+            token: str = Depends(token_dependency),
+        ):
+            page = max(page, 1)
+            page_size = min(max(page_size, 1), 100)
+            total = await self.database.count_douyin_users()
+            rows = await self.database.list_douyin_users_paged(page, page_size)
+            return DouyinUserPage(
+                total=total,
+                items=[DouyinUser(**self._normalize_user_row(i)) for i in rows],
+            )
+
+        @self.server.get(
+            "/admin/douyin/users/{sec_user_id}",
+            summary=_("查询抖音用户"),
+            tags=[_("管理")],
+            response_model=DouyinUser,
+        )
+        async def get_douyin_user(
+            sec_user_id: str, token: str = Depends(token_dependency)
+        ):
+            row = await self.database.get_douyin_user(sec_user_id)
+            if not row:
+                raise HTTPException(status_code=404, detail=_("抖音用户不存在"))
+            return DouyinUser(**self._normalize_user_row(row))
+
+        @self.server.post(
+            "/admin/douyin/users",
+            summary=_("新增抖音用户并拉取信息"),
+            tags=[_("管理")],
+            response_model=DouyinUser,
+        )
+        async def create_douyin_user(
+            payload: DouyinUserCreate, token: str = Depends(token_dependency)
+        ):
+            if await self.database.get_douyin_user(payload.sec_user_id):
+                raise HTTPException(status_code=409, detail=_("抖音用户已存在"))
+            data, next_cursor, has_more, cookie_id, cookie_invalid, empty_data = (
+                await self._fetch_douyin_account_page_with_pool(
+                    payload.sec_user_id,
+                    cursor=0,
+                    count=18,
+                )
+            )
+            if cookie_id and (data or empty_data):
+                await self.database.touch_douyin_cookie(cookie_id)
+            if data:
+                profile_source = data[0] if data else None
+                profile = (
+                    self._extract_author_profile(profile_source)
+                    if profile_source
+                    else {"uid": "", "nickname": "", "avatar": "", "cover": ""}
+                )
+                video_items = [item for item in data if self._is_video_item(item)]
+                if video_items:
+                    uid, nickname, _ = self.extractor.preprocessing_data(
+                        video_items,
+                        False,
+                        "post",
+                        user_id=payload.sec_user_id,
+                    )
+                    record = await self.database.upsert_douyin_user(
+                        sec_user_id=payload.sec_user_id,
+                        uid=uid or profile.get("uid", ""),
+                        nickname=nickname or profile.get("nickname", ""),
+                        avatar=profile.get("avatar", ""),
+                        cover=profile.get("cover", ""),
+                        has_works=True,
+                        status="active",
+                    )
+                    return DouyinUser(**self._normalize_user_row(record))
+                record = await self.database.upsert_douyin_user(
+                    sec_user_id=payload.sec_user_id,
+                    uid=profile.get("uid", ""),
+                    nickname=profile.get("nickname", ""),
+                    avatar=profile.get("avatar", ""),
+                    cover=profile.get("cover", ""),
+                    has_works=False,
+                    status="no_works",
+                )
+                return DouyinUser(**self._normalize_user_row(record))
+            record = await self.database.upsert_douyin_user(
+                sec_user_id=payload.sec_user_id,
+                uid="",
+                nickname="",
+                avatar="",
+                cover="",
+                has_works=False,
+                status="no_works",
+            )
+            return DouyinUser(**self._normalize_user_row(record))
+
+        @self.server.put(
+            "/admin/douyin/users/{sec_user_id}/settings",
+            summary=_("更新抖音用户设置"),
+            tags=[_("管理")],
+            response_model=DouyinUser,
+        )
+        async def update_douyin_user_settings(
+            sec_user_id: str,
+            payload: DouyinUserSettingsUpdate,
+            token: str = Depends(token_dependency),
+        ):
+            await self.database.update_douyin_user_settings(
+                sec_user_id,
+                payload.auto_update,
+                payload.update_window_start,
+                payload.update_window_end,
+            )
+            row = await self.database.get_douyin_user(sec_user_id)
+            if not row:
+                raise HTTPException(status_code=404, detail=_("抖音用户不存在"))
+            return DouyinUser(**self._normalize_user_row(row))
+
+        @self.server.get(
+            "/admin/douyin/users/{sec_user_id}/works",
+            summary=_("获取抖音用户作品列表"),
+            tags=[_("管理")],
+            response_model=DouyinWorkPage,
+        )
+        async def list_douyin_user_works(
+            sec_user_id: str,
+            cursor: int = 0,
+            count: int = 18,
+            token: str = Depends(token_dependency),
+        ):
+            count = min(max(count, 1), 50)
+            data, next_cursor, has_more, cookie_id, cookie_invalid, empty_data = (
+                await self._fetch_douyin_account_page_with_pool(
+                    sec_user_id,
+                    cursor=cursor,
+                    count=count,
+                )
+            )
+            if cookie_id and (data or empty_data):
+                await self.database.touch_douyin_cookie(cookie_id)
+            await self.database.update_douyin_user_fetch_time(sec_user_id)
+            await self.database.clear_douyin_user_new(sec_user_id)
+            video_items = [item for item in data if self._is_video_item(item)]
+            items = [
+                DouyinWork(**self._extract_work_brief(i, sec_user_id))
+                for i in video_items
+            ]
+            return DouyinWorkPage(items=items, next_cursor=next_cursor, has_more=has_more)
+
+        @self.server.get(
+            "/admin/douyin/users/{sec_user_id}/works/stored",
+            summary=_("获取抖音用户作品库"),
+            tags=[_("管理")],
+            response_model=DouyinWorkListPage,
+        )
+        async def list_douyin_user_works_stored(
+            sec_user_id: str,
+            page: int = 1,
+            page_size: int = 12,
+            token: str = Depends(token_dependency),
+        ):
+            page = max(page, 1)
+            page_size = min(max(page_size, 1), 50)
+            total = await self.database.count_douyin_user_works(sec_user_id)
+            rows = await self.database.list_douyin_user_works(
+                sec_user_id,
+                page=page,
+                page_size=page_size,
+            )
+            items = [self._build_work_from_row(row) for row in rows]
+            return DouyinWorkListPage(total=total, items=items)
+
+        @self.server.get(
+            "/admin/douyin/users/{sec_user_id}/latest",
+            summary=_("获取抖音用户当日作品"),
+            tags=[_("管理")],
+            response_model=DouyinDailyWorkPage,
+        )
+        async def list_douyin_user_latest(
+            sec_user_id: str,
+            page: int = 1,
+            page_size: int = 12,
+            token: str = Depends(token_dependency),
+        ):
+            page = max(page, 1)
+            page_size = min(max(page_size, 1), 50)
+            today = self._today_str()
+            total = await self.database.count_douyin_user_works_today(
+                sec_user_id,
+                today,
+            )
+            rows = await self.database.list_douyin_user_works_today(
+                sec_user_id,
+                today,
+                page=page,
+                page_size=page_size,
+            )
+            items = [self._build_work_from_row(row) for row in rows]
+            return DouyinDailyWorkPage(total=total, items=items)
+
+        @self.server.post(
+            "/admin/douyin/users/{sec_user_id}/latest",
+            summary=_("获取抖音用户最新作品"),
+            tags=[_("管理")],
+            response_model=DouyinDailyWorkPage,
+        )
+        async def fetch_douyin_user_latest(
+            sec_user_id: str, token: str = Depends(token_dependency)
+        ):
+            result = await self._refresh_user_latest(sec_user_id)
+            items = [DouyinWork(**i) for i in result.get("items", [])]
+            return DouyinDailyWorkPage(total=len(items), items=items)
+
+        @self.server.get(
+            "/admin/douyin/users/{sec_user_id}/live",
+            summary=_("获取抖音用户直播缓存"),
+            tags=[_("管理")],
+            response_model=DataResponse,
+        )
+        async def get_douyin_user_live_cache(
+            sec_user_id: str, token: str = Depends(token_dependency)
+        ):
+            cached = self._get_cached_live_info(sec_user_id)
+            message = _("请求成功") if cached else _("暂无缓存")
+            return DataResponse(
+                message=message,
+                data=cached,
+                params={"sec_user_id": sec_user_id},
+            )
+
+        @self.server.post(
+            "/admin/douyin/users/{sec_user_id}/live",
+            summary=_("获取抖音用户直播状态"),
+            tags=[_("管理")],
+            response_model=DataResponse,
+        )
+        async def fetch_douyin_user_live(
+            sec_user_id: str, token: str = Depends(token_dependency)
+        ):
+            live_info = await self._refresh_user_live(sec_user_id)
+            return DataResponse(
+                message=_("请求成功"),
+                data=live_info,
+                params={"sec_user_id": sec_user_id},
+            )
+
+        @self.server.delete(
+            "/admin/douyin/users/{sec_user_id}",
+            summary=_("删除抖音用户"),
+            tags=[_("管理")],
+            status_code=204,
+        )
+        async def delete_douyin_user(
+            sec_user_id: str, token: str = Depends(token_dependency)
+        ):
+            await self.database.delete_douyin_user(sec_user_id)
+
+        @self.server.get(
+            "/admin/douyin/cookies",
+            summary=_("获取抖音 Cookie 列表"),
+            tags=[_("管理")],
+            response_model=list[DouyinCookie],
+        )
+        async def list_douyin_cookies(token: str = Depends(token_dependency)):
+            rows = await self.database.list_douyin_cookies()
+            return [DouyinCookie(**self._normalize_cookie_row(i)) for i in rows]
+
+        @self.server.post(
+            "/admin/douyin/cookies",
+            summary=_("新增抖音 Cookie"),
+            tags=[_("管理")],
+            response_model=DouyinCookie,
+        )
+        async def create_douyin_cookie(
+            payload: DouyinCookieCreate, token: str = Depends(token_dependency)
+        ):
+            return await self._save_douyin_cookie(payload.account, payload.cookie)
+
+        @self.server.post(
+            "/admin/douyin/cookies/clipboard",
+            summary=_("从剪贴板新增抖音 Cookie"),
+            tags=[_("管理")],
+            response_model=DouyinCookie,
+        )
+        async def create_douyin_cookie_from_clipboard(
+            payload: DouyinCookieClipboardCreate,
+            token: str = Depends(token_dependency),
+        ):
+            cookie_value = self._read_clipboard_cookie()
+            if not cookie_value:
+                raise HTTPException(status_code=400, detail=_("剪贴板未读取到 Cookie"))
+            return await self._save_douyin_cookie(payload.account, cookie_value)
+
+        @self.server.post(
+            "/admin/douyin/cookies/browser",
+            summary=_("从浏览器新增抖音 Cookie"),
+            tags=[_("管理")],
+            response_model=DouyinCookie,
+        )
+        async def create_douyin_cookie_from_browser(
+            payload: DouyinCookieBrowserCreate,
+            token: str = Depends(token_dependency),
+        ):
+            cookie_dict = self._read_browser_cookie(payload.browser)
+            if not cookie_dict:
+                raise HTTPException(status_code=400, detail=_("未读取到 Cookie 数据"))
+            return await self._save_douyin_cookie(
+                payload.account,
+                cookie_dict_to_str(cookie_dict),
+            )
+
+        @self.server.delete(
+            "/admin/douyin/cookies/{cookie_id}",
+            summary=_("删除抖音 Cookie"),
+            tags=[_("管理")],
+            status_code=204,
+        )
+        async def delete_douyin_cookie(
+            cookie_id: int, token: str = Depends(token_dependency)
+        ):
+            await self.database.delete_douyin_cookie(cookie_id)
+
+        @self.server.get(
+            "/admin/douyin/schedule",
+            summary=_("获取全局计划任务设置"),
+            tags=[_("管理")],
+            response_model=DouyinScheduleSetting,
+        )
+        async def get_douyin_schedule(token: str = Depends(token_dependency)):
+            setting = self._resolve_schedule_setting(
+                await self.database.get_douyin_schedule()
+            )
+            return DouyinScheduleSetting(
+                enabled=bool(setting.get("enabled")),
+                times=setting.get("times_text", ""),
+                expression=setting.get("expression", ""),
+            )
+
+        @self.server.post(
+            "/admin/douyin/schedule",
+            summary=_("更新全局计划任务设置"),
+            tags=[_("管理")],
+            response_model=DouyinScheduleSetting,
+        )
+        async def update_douyin_schedule(
+            payload: DouyinScheduleSetting, token: str = Depends(token_dependency)
+        ):
+            times = self._parse_schedule_times_text(payload.times)
+            if payload.enabled and not times:
+                raise HTTPException(status_code=400, detail=_("未识别计划时间"))
+            record = await self.database.upsert_douyin_schedule(
+                payload.enabled,
+                self._format_schedule_times(times),
+            )
+            setting = self._resolve_schedule_setting(record)
+            return DouyinScheduleSetting(
+                enabled=bool(setting.get("enabled")),
+                times=setting.get("times_text", ""),
+                expression=setting.get("expression", ""),
+            )
+
+        @self.server.get(
+            "/admin/douyin/daily/works",
+            summary=_("获取当天新增作品列表"),
+            tags=[_("管理")],
+            response_model=DouyinDailyWorkPage,
+        )
+        async def list_douyin_daily_works(
+            page: int = 1,
+            page_size: int = 20,
+            token: str = Depends(token_dependency),
+        ):
+            page = max(page, 1)
+            page_size = min(max(page_size, 1), 100)
+            today = self._today_str()
+            total = await self.database.count_douyin_works_today(today)
+            rows = await self.database.list_douyin_works_today(
+                today,
+                page,
+                page_size,
+            )
+            items = []
+            for row in rows:
+                items.append(self._build_work_from_row(row))
+            return DouyinDailyWorkPage(total=total, items=items)
+
+        @self.server.get(
+            "/admin/douyin/daily/live",
+            summary=_("获取当天直播用户列表"),
+            tags=[_("管理")],
+            response_model=DouyinUserPage,
+        )
+        async def list_douyin_daily_live(
+            page: int = 1,
+            page_size: int = 20,
+            token: str = Depends(token_dependency),
+        ):
+            page = max(page, 1)
+            page_size = min(max(page_size, 1), 100)
+            today = self._today_str()
+            total = await self.database.count_douyin_live_today(today)
+            rows = await self.database.list_douyin_live_today(
+                today,
+                page,
+                page_size,
+            )
+            return DouyinUserPage(
+                total=total,
+                items=[DouyinUser(**self._normalize_user_row(i)) for i in rows],
+            )
 
         @self.server.post(
             "/douyin/share",
@@ -235,7 +1348,7 @@ class APIServer(TikTok):
             response_model=DataResponse,
         )
         async def handle_account(
-            extract: Account, token: str = Depends(token_dependency)
+            extract: AccountPayload, token: str = Depends(token_dependency)
         ):
             return await self.handle_account(extract, False)
 
@@ -701,24 +1814,31 @@ class APIServer(TikTok):
 
     async def handle_account(
         self,
-        extract: Account | AccountTiktok,
+        extract: AccountPayload | AccountTiktok,
         tiktok=False,
     ):
-        if data := await self.deal_account_detail(
-            0,
-            extract.sec_user_id,
-            tab=extract.tab,
-            earliest=extract.earliest,
-            latest=extract.latest,
-            pages=extract.pages,
-            api=True,
-            source=extract.source,
-            cookie=extract.cookie,
-            proxy=extract.proxy,
-            tiktok=tiktok,
-            cursor=extract.cursor,
-            count=extract.count,
-        ):
+        if tiktok:
+            if data := await self.deal_account_detail(
+                0,
+                extract.sec_user_id,
+                tab=extract.tab,
+                earliest=extract.earliest,
+                latest=extract.latest,
+                pages=extract.pages,
+                api=True,
+                source=extract.source,
+                cookie=extract.cookie,
+                proxy=extract.proxy,
+                tiktok=tiktok,
+                cursor=extract.cursor,
+                count=extract.count,
+            ):
+                return self.success_response(extract, data)
+            return self.failed_response(extract)
+        data, meta, cookie_id = await self._fetch_douyin_account_data(extract)
+        if cookie_id and (data or (meta or {}).get("empty_data")):
+            await self.database.touch_douyin_cookie(cookie_id)
+        if data:
             return self.success_response(extract, data)
         return self.failed_response(extract)
 
@@ -726,45 +1846,9 @@ class APIServer(TikTok):
         self,
         extract: AccountLive,
     ):
-        live_info = await self.get_account_live_status(
-            extract.sec_user_id,
-            cookie=extract.cookie,
-            proxy=extract.proxy,
-            dump_html=extract.dump_html,
-        )
+        live_info = await self._build_live_info(extract)
         if not live_info:
             return self.failed_response(extract)
-        web_rid = live_info.get("web_rid") or None
-        room_id = live_info.get("room_id") or None
-        if not live_info.get("live_status") or (not room_id and not web_rid):
-            live_info["room"] = None
-            return self.success_response(extract, live_info)
-        room_data = await self.get_live_data(
-            web_rid=web_rid,
-            room_id=room_id,
-            sec_user_id=extract.sec_user_id,
-            cookie=extract.cookie,
-            proxy=extract.proxy,
-        )
-        if not room_data and room_id and web_rid:
-            room_data = await self.get_live_data(
-                room_id=room_id,
-                sec_user_id=extract.sec_user_id,
-                cookie=extract.cookie,
-                proxy=extract.proxy,
-            )
-        if not room_data:
-            live_info["room"] = None
-            return self.success_response(extract, live_info)
-        if extract.source:
-            live_info["room"] = room_data
-            return self.success_response(extract, live_info)
-        room_list = await self.extractor.run(
-            [room_data],
-            None,
-            "live",
-        )
-        live_info["room"] = room_list[0] if room_list else None
         return self.success_response(extract, live_info)
 
     @staticmethod
