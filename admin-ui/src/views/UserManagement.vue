@@ -169,12 +169,45 @@ const openModal = () => {
   state.modalOpen = true;
 };
 
-const isValidSecUserId = (value) => {
+const isValidUserInput = (value) => {
   const trimmed = value.trim();
-  if (!trimmed.startsWith("MS4wL")) {
+  if (!trimmed) {
     return false;
   }
-  return /^MS4wL[0-9A-Za-z_-]+$/.test(trimmed);
+  if (/^MS4wL[0-9A-Za-z_-]+$/.test(trimmed)) {
+    return true;
+  }
+  if (/^https?:\/\/live\.douyin\.com\/\d+/.test(trimmed)) {
+    return true;
+  }
+  if (/^live\.douyin\.com\/\d+/.test(trimmed)) {
+    return true;
+  }
+  if (/^https?:\/\/(www\.)?douyin\.com\/user\/[A-Za-z0-9_-]+/.test(trimmed)) {
+    return true;
+  }
+  if (/^(www\.)?douyin\.com\/user\/[A-Za-z0-9_-]+/.test(trimmed)) {
+    return true;
+  }
+  if (/^https?:\/\/(www\.)?iesdouyin\.com\/share\/user\//.test(trimmed)) {
+    return true;
+  }
+  if (/^(www\.)?iesdouyin\.com\/share\/user\//.test(trimmed)) {
+    return true;
+  }
+  if (/^https?:\/\/webcast\.amemv\.com\/douyin\/webcast\/reflow\//.test(trimmed)) {
+    return true;
+  }
+  if (/^webcast\.amemv\.com\/douyin\/webcast\/reflow\//.test(trimmed)) {
+    return true;
+  }
+  if (/^https?:\/\/www\.douyin\.com\/follow\?webRid=\d+/.test(trimmed)) {
+    return true;
+  }
+  if (/^www\.douyin\.com\/follow\?webRid=\d+/.test(trimmed)) {
+    return true;
+  }
+  return false;
 };
 
 const copyUserId = async (value) => {
@@ -217,8 +250,8 @@ const createUser = async (secUserId) => {
     setAlert("error", "请输入用户标识");
     return;
   }
-  if (!isValidSecUserId(value)) {
-    setAlert("error", "用户标识格式不正确，应以 MS4wL 开头");
+  if (!isValidUserInput(value)) {
+    setAlert("error", "请输入用户标识或抖音链接");
     return;
   }
   state.loading.create = true;

@@ -82,6 +82,8 @@ class APIServer(TikTok):
     DEFAULT_SCHEDULE_TIMES = ("09:30", "15:30", "21:00")
     REFRESH_QUEUE_SIZE = 200
     REFRESH_CONCURRENCY = 2
+    USER_ID_PATTERN = re.compile(r"^MS4wL[0-9A-Za-z_-]+$")
+    USER_ID_SCAN_PATTERN = re.compile(r"MS4wL[0-9A-Za-z_-]+")
 
     def __init__(
         self,
@@ -192,6 +194,78 @@ class APIServer(TikTok):
         if cls._extract_first_url(video.get("play_url")):
             return True
         return False
+
+    @classmethod
+    def _normalize_input_url(cls, value: str) -> str:
+        if not value:
+            return ""
+        if value.startswith(("http://", "https://")):
+            return value
+        prefixes = (
+            "www.douyin.com/",
+            "douyin.com/",
+            "live.douyin.com/",
+            "www.iesdouyin.com/",
+            "iesdouyin.com/",
+            "webcast.amemv.com/",
+        )
+        if value.startswith(prefixes):
+            return f"https://{value}"
+        return value
+
+    def _extract_sec_user_id_from_live(self, data: dict) -> str:
+        if not isinstance(data, dict):
+            return ""
+        try:
+            obj = self.extractor.generate_data_object(data)
+        except Exception:
+            return ""
+        candidates = (
+            "data.data[0].owner.sec_uid",
+            "data.data[0].owner.secUid",
+            "data.data[0].owner.sec_user_id",
+            "data.room.owner.sec_uid",
+            "data.room.owner.secUid",
+            "data.room.owner.sec_user_id",
+            "data.owner.sec_uid",
+            "data.owner.secUid",
+        )
+        for path in candidates:
+            value = self.extractor.safe_extract(obj, path, "")
+            if value:
+                return str(value)
+        return ""
+
+    async def _resolve_sec_user_id(self, value: str) -> str:
+        text = (value or "").strip()
+        if not text:
+            return ""
+        if self.USER_ID_PATTERN.match(text):
+            return text
+        if "MS4wL" in text:
+            match = self.USER_ID_SCAN_PATTERN.search(text)
+            if match:
+                return match.group(0)
+        normalized = self._normalize_input_url(text)
+        try:
+            links = await self.links.run(normalized, "user")
+        except Exception:
+            links = []
+        if links:
+            return links[0]
+        try:
+            live_ids = await self.links.run(normalized, type_="live")
+        except Exception:
+            live_ids = []
+        for web_rid in live_ids:
+            try:
+                live_data = await self.get_live_data(web_rid=web_rid)
+            except Exception:
+                continue
+            sec_user_id = self._extract_sec_user_id_from_live(live_data)
+            if sec_user_id:
+                return sec_user_id
+        return ""
 
     def _debug_dump_account_data(self, sec_user_id: str, data: list[dict]) -> None:
         if not sec_user_id or not data:
@@ -939,11 +1013,14 @@ class APIServer(TikTok):
         async def create_douyin_user(
             payload: DouyinUserCreate, token: str = Depends(token_dependency)
         ):
-            if await self.database.get_douyin_user(payload.sec_user_id):
+            sec_user_id = await self._resolve_sec_user_id(payload.sec_user_id)
+            if not sec_user_id:
+                raise HTTPException(status_code=400, detail=_("无法识别用户标识或链接"))
+            if await self.database.get_douyin_user(sec_user_id):
                 raise HTTPException(status_code=409, detail=_("抖音用户已存在"))
             data, next_cursor, has_more, cookie_id, cookie_invalid, empty_data = (
                 await self._fetch_douyin_account_page_with_pool(
-                    payload.sec_user_id,
+                    sec_user_id,
                     cursor=0,
                     count=18,
                 )
@@ -963,10 +1040,10 @@ class APIServer(TikTok):
                         video_items,
                         False,
                         "post",
-                        user_id=payload.sec_user_id,
+                        user_id=sec_user_id,
                     )
                     record = await self.database.upsert_douyin_user(
-                        sec_user_id=payload.sec_user_id,
+                        sec_user_id=sec_user_id,
                         uid=uid or profile.get("uid", ""),
                         nickname=nickname or profile.get("nickname", ""),
                         avatar=profile.get("avatar", ""),
@@ -974,10 +1051,10 @@ class APIServer(TikTok):
                         has_works=True,
                         status="active",
                     )
-                    self._trigger_refresh_latest(payload.sec_user_id)
+                    self._trigger_refresh_latest(sec_user_id)
                     return DouyinUser(**self._normalize_user_row(record))
                 record = await self.database.upsert_douyin_user(
-                    sec_user_id=payload.sec_user_id,
+                    sec_user_id=sec_user_id,
                     uid=profile.get("uid", ""),
                     nickname=profile.get("nickname", ""),
                     avatar=profile.get("avatar", ""),
@@ -985,10 +1062,10 @@ class APIServer(TikTok):
                     has_works=False,
                     status="no_works",
                 )
-                self._trigger_refresh_latest(payload.sec_user_id)
+                self._trigger_refresh_latest(sec_user_id)
                 return DouyinUser(**self._normalize_user_row(record))
             record = await self.database.upsert_douyin_user(
-                sec_user_id=payload.sec_user_id,
+                sec_user_id=sec_user_id,
                 uid="",
                 nickname="",
                 avatar="",
@@ -996,7 +1073,7 @@ class APIServer(TikTok):
                 has_works=False,
                 status="no_works",
             )
-            self._trigger_refresh_latest(payload.sec_user_id)
+            self._trigger_refresh_latest(sec_user_id)
             return DouyinUser(**self._normalize_user_row(record))
 
         @self.server.put(

@@ -3,14 +3,15 @@
     <div class="modal-card" role="dialog" aria-modal="true">
       <div class="modal-header">
         <h3>新增用户</h3>
-        <button class="ghost" @click="close">关闭</button>
       </div>
       <div class="modal-body">
         <label class="field">
-          <span>用户标识</span>
-          <input v-model="form.secUserId" placeholder="请输入用户标识" />
+          <span>用户标识或链接</span>
+          <input
+            v-model="form.secUserId"
+            placeholder="支持用户标识/直播链接/用户主页链接"
+          />
         </label>
-        <p class="muted">仅支持抖音账号标识。</p>
       </div>
       <div class="modal-actions">
         <button class="ghost" @click="close">取消</button>
