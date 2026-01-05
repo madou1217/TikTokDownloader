@@ -80,6 +80,8 @@ def token_dependency(token: str = Header(None)):
 class APIServer(TikTok):
     USER_FETCH_TIMEOUT = 20
     DEFAULT_SCHEDULE_TIMES = ("09:30", "15:30", "21:00")
+    REFRESH_QUEUE_SIZE = 200
+    REFRESH_CONCURRENCY = 2
 
     def __init__(
         self,
@@ -97,6 +99,9 @@ class APIServer(TikTok):
         self._schedule_last_key = ""
         self._douyin_live_cache = {}
         self._debug_account_dumped = set()
+        self._refresh_queue = asyncio.Queue(maxsize=self.REFRESH_QUEUE_SIZE)
+        self._refresh_workers = []
+        self._refresh_pending = set()
 
     @staticmethod
     def _hash_cookie(cookie: str) -> str:
@@ -665,6 +670,28 @@ class APIServer(TikTok):
             "total": len(today_works),
         }
 
+    def _trigger_refresh_latest(self, sec_user_id: str) -> None:
+        if not sec_user_id:
+            return
+        if sec_user_id in self._refresh_pending:
+            return
+        try:
+            self._refresh_queue.put_nowait(sec_user_id)
+            self._refresh_pending.add(sec_user_id)
+        except asyncio.QueueFull:
+            self.logger.warning(_("自动拉取队列已满，忽略请求"))
+
+    async def _refresh_latest_worker(self, worker_id: int) -> None:
+        while True:
+            sec_user_id = await self._refresh_queue.get()
+            try:
+                await self._refresh_user_latest(sec_user_id)
+            except Exception:
+                self.logger.error(_("自动拉取任务执行异常"), exc_info=True)
+            finally:
+                self._refresh_pending.discard(sec_user_id)
+                self._refresh_queue.task_done()
+
     async def _refresh_user_live(self, sec_user_id: str) -> dict:
         extract = AccountLive(
             sec_user_id=sec_user_id,
@@ -758,12 +785,21 @@ class APIServer(TikTok):
         async def startup_schedule():
             if not self._schedule_task:
                 self._schedule_task = asyncio.create_task(self._run_schedule_loop())
+            if not self._refresh_workers:
+                self._refresh_workers = [
+                    asyncio.create_task(self._refresh_latest_worker(index))
+                    for index in range(self.REFRESH_CONCURRENCY)
+                ]
 
         @self.server.on_event("shutdown")
         async def shutdown_schedule():
             if self._schedule_task:
                 self._schedule_task.cancel()
                 self._schedule_task = None
+            if self._refresh_workers:
+                for task in self._refresh_workers:
+                    task.cancel()
+                self._refresh_workers = []
 
         @self.server.get(
             "/",
@@ -938,6 +974,7 @@ class APIServer(TikTok):
                         has_works=True,
                         status="active",
                     )
+                    self._trigger_refresh_latest(payload.sec_user_id)
                     return DouyinUser(**self._normalize_user_row(record))
                 record = await self.database.upsert_douyin_user(
                     sec_user_id=payload.sec_user_id,
@@ -948,6 +985,7 @@ class APIServer(TikTok):
                     has_works=False,
                     status="no_works",
                 )
+                self._trigger_refresh_latest(payload.sec_user_id)
                 return DouyinUser(**self._normalize_user_row(record))
             record = await self.database.upsert_douyin_user(
                 sec_user_id=payload.sec_user_id,
@@ -958,6 +996,7 @@ class APIServer(TikTok):
                 has_works=False,
                 status="no_works",
             )
+            self._trigger_refresh_latest(payload.sec_user_id)
             return DouyinUser(**self._normalize_user_row(record))
 
         @self.server.put(

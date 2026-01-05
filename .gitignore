@@ -5,6 +5,8 @@ __pycache__/
 /.idea/
 /.run/
 /Volume/
+/Cache/
+/Cache/admin_account_sample.json
 !/.github/
 
 
