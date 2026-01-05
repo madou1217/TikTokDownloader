@@ -2,7 +2,7 @@
   <section class="card">
     <div class="card-header">
       <div>
-        <h2>设置</h2>
+        <h2>Cookie设置</h2>
         <p class="muted">管理用于抓包的抖音登录凭证。</p>
       </div>
       <button class="ghost" :disabled="state.loading.list" @click="loadCookies">

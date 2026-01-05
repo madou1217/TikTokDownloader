@@ -21,7 +21,14 @@
         :class="{ active: isActive('/settings') }"
         to="/settings"
       >
-        设置
+        Cookie设置
+      </RouterLink>
+      <RouterLink
+        class="tab"
+        :class="{ active: isActive('/schedule') }"
+        to="/schedule"
+      >
+        计划任务
       </RouterLink>
     </nav>
 

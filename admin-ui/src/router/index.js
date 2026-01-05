@@ -2,6 +2,7 @@ import { createRouter, createWebHashHistory } from "vue-router";
 import UserManagement from "../views/UserManagement.vue";
 import UserDetail from "../views/UserDetail.vue";
 import SettingsCookies from "../views/SettingsCookies.vue";
+import ScheduleSettings from "../views/ScheduleSettings.vue";
 
 const routes = [
   {
@@ -19,6 +20,10 @@ const routes = [
   {
     path: "/settings",
     component: SettingsCookies,
+  },
+  {
+    path: "/schedule",
+    component: ScheduleSettings,
   },
 ];
 
