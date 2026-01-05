@@ -9,7 +9,7 @@
           <span>用户标识或链接</span>
           <input
             v-model="form.secUserId"
-            placeholder="支持用户标识/直播链接/用户主页链接"
+            placeholder="支持用户标识/直播链接/主页或作品链接"
           />
         </label>
       </div>

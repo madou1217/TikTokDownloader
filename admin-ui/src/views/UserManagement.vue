@@ -189,6 +189,24 @@ const isValidUserInput = (value) => {
   if (/^(www\.)?douyin\.com\/user\/[A-Za-z0-9_-]+/.test(trimmed)) {
     return true;
   }
+  if (/^https?:\/\/(www\.)?douyin\.com\/(video|note|slides)\/\d{19}/.test(trimmed)) {
+    return true;
+  }
+  if (/^(www\.)?douyin\.com\/(video|note|slides)\/\d{19}/.test(trimmed)) {
+    return true;
+  }
+  if (/^https?:\/\/(www\.)?douyin\.com\/\S*modal_id=\d{19}/.test(trimmed)) {
+    return true;
+  }
+  if (/^(www\.)?douyin\.com\/\S*modal_id=\d{19}/.test(trimmed)) {
+    return true;
+  }
+  if (/^https?:\/\/(www\.)?iesdouyin\.com\/share\/(video|note|slides)\/\d{19}/.test(trimmed)) {
+    return true;
+  }
+  if (/^(www\.)?iesdouyin\.com\/share\/(video|note|slides)\/\d{19}/.test(trimmed)) {
+    return true;
+  }
   if (/^https?:\/\/(www\.)?iesdouyin\.com\/share\/user\//.test(trimmed)) {
     return true;
   }

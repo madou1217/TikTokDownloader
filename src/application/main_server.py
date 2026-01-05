@@ -56,7 +56,7 @@ from ..models import (
     UserSearch,
     VideoSearch,
 )
-from ..interface import Account as AccountFetcher
+from ..interface import Account as AccountFetcher, Detail as DetailFetcher
 from ..module import Cookie
 from ..tools import Browser, cookie_dict_to_str
 from ..translation import _
@@ -236,6 +236,39 @@ class APIServer(TikTok):
                 return str(value)
         return ""
 
+    @staticmethod
+    def _extract_sec_user_id_from_detail_data(data: dict) -> str:
+        if not isinstance(data, dict):
+            return ""
+        if "aweme_detail" in data and isinstance(data.get("aweme_detail"), dict):
+            data = data.get("aweme_detail") or {}
+        if "aweme_detail_list" in data:
+            detail_list = data.get("aweme_detail_list") or []
+            if detail_list and isinstance(detail_list[0], dict):
+                data = detail_list[0]
+        author = data.get("author") if isinstance(data.get("author"), dict) else {}
+        sec_user_id = (
+            author.get("sec_uid")
+            or author.get("secUid")
+            or author.get("sec_user_id")
+            or ""
+        )
+        return str(sec_user_id) if sec_user_id else ""
+
+    async def _resolve_sec_user_id_from_detail(self, detail_id: str) -> str:
+        if not detail_id:
+            return ""
+        try:
+            data = await self.handle_detail_single(
+                DetailFetcher,
+                "",
+                None,
+                detail_id,
+            )
+        except Exception:
+            return ""
+        return self._extract_sec_user_id_from_detail_data(data)
+
     async def _resolve_sec_user_id(self, value: str) -> str:
         text = (value or "").strip()
         if not text:
@@ -253,6 +286,14 @@ class APIServer(TikTok):
             links = []
         if links:
             return links[0]
+        try:
+            detail_ids = await self.links.run(normalized, "detail")
+        except Exception:
+            detail_ids = []
+        for detail_id in detail_ids:
+            sec_user_id = await self._resolve_sec_user_id_from_detail(detail_id)
+            if sec_user_id:
+                return sec_user_id
         try:
             live_ids = await self.links.run(normalized, type_="live")
         except Exception:
