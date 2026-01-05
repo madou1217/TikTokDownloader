@@ -1,6 +1,6 @@
 import asyncio
 import re
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -354,6 +354,7 @@ class APIServer(TikTok):
             "last_fetch_at": row.get("last_fetch_at", ""),
             "created_at": row.get("created_at", ""),
             "updated_at": row.get("updated_at", ""),
+            "next_auto_update_at": row.get("next_auto_update_at", ""),
         }
 
     def _normalize_cookie_row(self, row: dict) -> dict:
@@ -432,13 +433,66 @@ class APIServer(TikTok):
         return ", ".join(times)
 
     @classmethod
-    def _parse_schedule_times_text(cls, value: str) -> list[str]:
+    def _normalize_schedule_text(cls, value: str) -> str:
         if not value:
+            return ""
+        text = value.strip()
+        text = text.replace("，", ",")
+        text = re.sub(r"\s*-\s*", "-", text)
+        text = re.sub(r"\s*/\s*", "/", text)
+        text = re.sub(
+            r"(\d{1,2}:\d{2}-\d{1,2}:\d{2})\s*每", r"\1每", text
+        )
+        return text
+
+    @classmethod
+    def _parse_schedule_times_text(cls, value: str) -> list[str]:
+        text = cls._normalize_schedule_text(value)
+        if not text:
             return []
-        matches = re.findall(r"(\d{1,2})\s*:\s*(\d{2})", value)
+        parts = [p for p in re.split(r"[,\s]+", text) if p]
         times = []
         seen = set()
-        for hour_str, minute_str in matches:
+        for part in parts:
+            range_match = re.match(
+                r"^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})(?:/(\d+))?$", part
+            )
+            interval = None
+            if range_match:
+                start_raw, end_raw, interval_raw = range_match.groups()
+                interval = int(interval_raw) if interval_raw else 1
+            else:
+                range_match = re.match(
+                    r"^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})每(\d+)?小时$",
+                    part,
+                )
+                if range_match:
+                    start_raw, end_raw, interval_raw = range_match.groups()
+                    interval = int(interval_raw) if interval_raw else 1
+            if range_match:
+                start_time = cls._parse_time(start_raw)
+                end_time = cls._parse_time(end_raw)
+                if not start_time or not end_time:
+                    continue
+                if interval <= 0:
+                    continue
+                if start_time > end_time:
+                    continue
+                start_minutes = start_time.hour * 60 + start_time.minute
+                end_minutes = end_time.hour * 60 + end_time.minute
+                step = interval * 60
+                current = start_minutes
+                while current <= end_minutes:
+                    key = f"{current // 60:02d}:{current % 60:02d}"
+                    if key not in seen:
+                        seen.add(key)
+                        times.append(key)
+                    current += step
+                continue
+            time_match = re.match(r"^(\d{1,2})\s*:\s*(\d{2})$", part)
+            if not time_match:
+                continue
+            hour_str, minute_str = time_match.groups()
             try:
                 hour = int(hour_str)
                 minute = int(minute_str)
@@ -470,11 +524,13 @@ class APIServer(TikTok):
 
     def _resolve_schedule_setting(self, data: dict) -> dict:
         enabled = True if not data else bool(data.get("enabled", 1))
-        times_text = (data.get("times_text") or "").strip()
-        times = self._parse_schedule_times_text(times_text)
+        raw_text = self._normalize_schedule_text(data.get("times_text") or "")
+        times = self._parse_schedule_times_text(raw_text)
         if not times:
             times = list(self.DEFAULT_SCHEDULE_TIMES)
-        times_text = self._format_schedule_times(times)
+            times_text = self._format_schedule_times(times)
+        else:
+            times_text = raw_text if raw_text else self._format_schedule_times(times)
         expression = self._build_schedule_expression(times)
         return {
             "enabled": enabled,
@@ -482,6 +538,37 @@ class APIServer(TikTok):
             "times_text": times_text,
             "expression": expression,
         }
+
+    async def _compute_next_auto_update_at(self, row: dict) -> str:
+        if not row:
+            return ""
+        if not row.get("auto_update"):
+            return "已关闭"
+        setting = self._resolve_schedule_setting(
+            await self.database.get_douyin_schedule()
+        )
+        if not setting.get("enabled"):
+            return "已停用"
+        times = setting.get("times") or []
+        if not times:
+            return "-"
+        now = datetime.now()
+        now_floor = now.replace(second=0, microsecond=0)
+        start = row.get("update_window_start", "")
+        end = row.get("update_window_end", "")
+        for day_offset in range(2):
+            day = now.date() + timedelta(days=day_offset)
+            for time_str in times:
+                time_obj = self._parse_time(time_str)
+                if not time_obj:
+                    continue
+                candidate = datetime.combine(day, time_obj)
+                if day_offset == 0 and candidate < now_floor:
+                    continue
+                if not self._within_window(start, end, candidate.time()):
+                    continue
+                return candidate.strftime("%Y-%m-%d %H:%M:%S")
+        return "-"
 
     @classmethod
     def _extract_work_brief(cls, item: dict, fallback_sec_user_id: str) -> dict:
@@ -1043,6 +1130,7 @@ class APIServer(TikTok):
             row = await self.database.get_douyin_user(sec_user_id)
             if not row:
                 raise HTTPException(status_code=404, detail=_("抖音用户不存在"))
+            row["next_auto_update_at"] = await self._compute_next_auto_update_at(row)
             return DouyinUser(**self._normalize_user_row(row))
 
         @self.server.post(
@@ -1368,12 +1456,13 @@ class APIServer(TikTok):
         async def update_douyin_schedule(
             payload: DouyinScheduleSetting, token: str = Depends(token_dependency)
         ):
-            times = self._parse_schedule_times_text(payload.times)
+            raw_times = self._normalize_schedule_text(payload.times or "")
+            times = self._parse_schedule_times_text(raw_times)
             if payload.enabled and not times:
                 raise HTTPException(status_code=400, detail=_("未识别计划时间"))
             record = await self.database.upsert_douyin_schedule(
                 payload.enabled,
-                self._format_schedule_times(times),
+                raw_times,
             )
             setting = self._resolve_schedule_setting(record)
             return DouyinScheduleSetting(

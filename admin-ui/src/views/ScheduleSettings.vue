@@ -3,7 +3,7 @@
     <div class="card-header">
       <div>
         <h2>计划任务</h2>
-        <p class="muted">设置自动拉取的时间点（24 小时制）。</p>
+        <p class="muted">支持时间点或区间配置（24 小时制）。</p>
       </div>
       <button class="ghost" :disabled="state.loading.fetch" @click="loadSetting">
         刷新
@@ -22,9 +22,11 @@
         <span>执行时间</span>
         <input
           v-model="state.form.times"
-          placeholder="例如 09:00,12:30,18:00"
+          placeholder="例如 09:00,12:30 或 08:00-23:00/2"
         />
-        <small class="muted">多个时间可用逗号或空格分隔。</small>
+        <small class="muted">
+          多个时间可用逗号或空格分隔，逗号支持中英文，区间支持“08:00-23:00/2”。
+        </small>
       </label>
       <label class="field">
         <span>当前表达式</span>

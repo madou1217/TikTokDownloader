@@ -7,7 +7,7 @@
       <div class="detail-actions">
         <button
           class="primary"
-          :disabled="state.loading.fetch || !canFetchNow"
+          :disabled="state.loading.fetch"
           @click="fetchTodayData"
         >
           <span v-if="state.loading.fetch" class="spinner"></span>
@@ -90,8 +90,8 @@
             <span class="mono">{{ state.user.last_fetch_at || "-" }}</span>
           </div>
           <div class="info-row">
-            <span>可拉取时间</span>
-            <span class="mono">{{ fetchWindowText }}</span>
+            <span>下次自动更新</span>
+            <span class="mono">{{ nextAutoUpdateText }}</span>
           </div>
           <div class="info-row">
             <span>最近直播</span>
@@ -255,39 +255,9 @@ const formatStatus = (value) => {
   return map[value] || "未知";
 };
 
-const parseTime = (value) => {
-  if (!value) {
-    return null;
-  }
-  const [hour, minute] = value.split(":").map((item) => Number(item));
-  if (Number.isNaN(hour) || Number.isNaN(minute)) {
-    return null;
-  }
-  return hour * 60 + minute;
-};
-
-const canFetchNow = computed(() => {
-  const start = parseTime(state.user.update_window_start);
-  const end = parseTime(state.user.update_window_end);
-  if (start === null || end === null) {
-    return true;
-  }
-  const now = new Date();
-  const current = now.getHours() * 60 + now.getMinutes();
-  if (start <= end) {
-    return current >= start && current <= end;
-  }
-  return current >= start || current <= end;
-});
-
-const fetchWindowText = computed(() => {
-  const start = state.user.update_window_start || "";
-  const end = state.user.update_window_end || "";
-  if (!start || !end) {
-    return "不限时间";
-  }
-  return `${start} - ${end}`;
-});
+const nextAutoUpdateText = computed(
+  () => state.user.next_auto_update_at || "-"
+);
 
 const toggleInfo = () => {
   state.showInfo = !state.showInfo;
@@ -468,10 +438,6 @@ const refreshLive = async () => {
 };
 
 const fetchTodayData = async () => {
-  if (!canFetchNow.value) {
-    setAlert("error", "当前不在可拉取时间范围内");
-    return;
-  }
   state.loading.fetch = true;
   try {
     await fetchLatestWorks();

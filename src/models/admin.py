@@ -24,6 +24,7 @@ class DouyinUser(BaseModel):
     last_fetch_at: str = ""
     created_at: str = ""
     updated_at: str = ""
+    next_auto_update_at: str = ""
 
 
 class DouyinUserPage(BaseModel):
