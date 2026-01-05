@@ -466,7 +466,6 @@ class Database:
             is_live, has_new_today, auto_update, update_window_start, update_window_end,
             last_live_at, last_new_at, last_fetch_at, created_at, updated_at
             FROM douyin_user
-            WHERE auto_update=1
             ORDER BY updated_at DESC;"""
         )
         return [dict(i) for i in await self.cursor.fetchall()]

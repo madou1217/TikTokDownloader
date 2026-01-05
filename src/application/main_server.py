@@ -542,8 +542,6 @@ class APIServer(TikTok):
     async def _compute_next_auto_update_at(self, row: dict) -> str:
         if not row:
             return ""
-        if not row.get("auto_update"):
-            return "已关闭"
         setting = self._resolve_schedule_setting(
             await self.database.get_douyin_schedule()
         )
