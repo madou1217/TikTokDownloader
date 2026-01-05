@@ -1,15 +1,18 @@
 import asyncio
+from asyncio.subprocess import PIPE
 import re
+from contextlib import suppress
 from datetime import datetime, time, timedelta
 from hashlib import sha256
 import json
 from pathlib import Path
+from shutil import which
 from textwrap import dedent
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
+from urllib.parse import quote, urljoin, urlparse, urlencode
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import RedirectResponse, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pyperclip import paste
 from uvicorn import Config, Server
@@ -20,6 +23,7 @@ from ..custom import (
     SERVER_HOST,
     SERVER_PORT,
     VERSION_BETA,
+    VIDEO_INDEX,
     is_valid_token,
 )
 from ..models import (
@@ -42,6 +46,8 @@ from ..models import (
     DouyinWorkPage,
     DouyinDailyWorkPage,
     DouyinWorkListPage,
+    DouyinClientFeedItem,
+    DouyinClientFeedPage,
     DouyinScheduleSetting,
     GeneralSearch,
     Live,
@@ -82,6 +88,8 @@ class APIServer(TikTok):
     DEFAULT_SCHEDULE_TIMES = ("09:30", "15:30", "21:00")
     REFRESH_QUEUE_SIZE = 200
     REFRESH_CONCURRENCY = 2
+    MEDIA_PROBE_TIMEOUT = 8
+    MEDIA_PROBE_CONCURRENCY = 2
     USER_ID_PATTERN = re.compile(r"^MS4wL[0-9A-Za-z_-]+$")
     USER_ID_SCAN_PATTERN = re.compile(r"MS4wL[0-9A-Za-z_-]+")
 
@@ -170,6 +178,88 @@ class APIServer(TikTok):
             return int(value)
         except (TypeError, ValueError):
             return 0
+
+    @classmethod
+    def _extract_video_size(cls, video: dict) -> tuple[int, int]:
+        if not isinstance(video, dict):
+            return 0, 0
+        width = int(video.get("width") or 0)
+        height = int(video.get("height") or 0)
+        if width and height:
+            return width, height
+        bit_rate = video.get("bit_rate")
+        if isinstance(bit_rate, list) and bit_rate:
+            sizes = []
+            for item in bit_rate:
+                if not isinstance(item, dict):
+                    continue
+                play_addr = item.get("play_addr")
+                if not isinstance(play_addr, dict):
+                    continue
+                size_w = int(play_addr.get("width") or 0)
+                size_h = int(play_addr.get("height") or 0)
+                if size_w and size_h:
+                    sizes.append((max(size_w, size_h), size_w, size_h))
+            if sizes:
+                sizes.sort(key=lambda x: x[0])
+                return sizes[-1][1], sizes[-1][2]
+        for key in ("play_addr", "play_addr_h264", "play_addr_bytevc1"):
+            value = video.get(key)
+            if not isinstance(value, dict):
+                continue
+            size_w = int(value.get("width") or 0)
+            size_h = int(value.get("height") or 0)
+            if size_w and size_h:
+                return size_w, size_h
+        return 0, 0
+
+    @classmethod
+    def _extract_work_play_url(cls, item: dict) -> str:
+        video = item.get("video") if isinstance(item, dict) else None
+        if not isinstance(video, dict):
+            return ""
+        bit_rate = video.get("bit_rate")
+        if isinstance(bit_rate, list) and bit_rate:
+            try:
+                items = []
+                for item in bit_rate:
+                    if not isinstance(item, dict):
+                        continue
+                    play_addr = (
+                        item.get("play_addr")
+                        if isinstance(item.get("play_addr"), dict)
+                        else {}
+                    )
+                    url_list = play_addr.get("url_list") or []
+                    items.append(
+                        (
+                            int(item.get("FPS") or 0),
+                            int(item.get("bit_rate") or 0),
+                            int(play_addr.get("data_size") or 0),
+                            int(play_addr.get("height") or 0),
+                            int(play_addr.get("width") or 0),
+                            url_list,
+                        )
+                    )
+                items.sort(
+                    key=lambda x: (
+                        max(x[3], x[4]),
+                        x[0],
+                        x[1],
+                        x[2],
+                    )
+                )
+                if items:
+                    url_list = items[-1][-1]
+                    if isinstance(url_list, list) and url_list:
+                        return str(url_list[VIDEO_INDEX])
+            except Exception:
+                pass
+        for key in ("play_addr", "play_addr_h264", "play_addr_bytevc1", "play_url"):
+            url = cls._extract_first_url(video.get(key))
+            if url:
+                return url
+        return ""
 
     @classmethod
     def _is_video_item(cls, item: dict) -> bool:
@@ -579,6 +669,8 @@ class APIServer(TikTok):
             else ""
         )
         author = item.get("author") or {}
+        video = item.get("video") if isinstance(item, dict) else None
+        width, height = cls._extract_video_size(video)
         return {
             "sec_user_id": author.get("sec_uid", "") or fallback_sec_user_id,
             "aweme_id": aweme_id,
@@ -589,6 +681,9 @@ class APIServer(TikTok):
             "nickname": author.get("nickname", ""),
             "cover": cls._extract_work_cover(item),
             "play_count": cls._extract_play_count(item),
+            "width": width,
+            "height": height,
+            "play_url": cls._extract_work_play_url(item),
         }
 
     def _build_work_from_row(self, row: dict) -> DouyinWork:
@@ -603,6 +698,373 @@ class APIServer(TikTok):
             nickname=row.get("nickname", ""),
             cover=row.get("cover", ""),
             play_count=int(row.get("play_count") or 0),
+            width=int(row.get("width") or 0),
+            height=int(row.get("height") or 0),
+        )
+
+    @staticmethod
+    def _parse_datetime_ts(value: str) -> int:
+        if not value:
+            return 0
+        try:
+            return int(datetime.strptime(value, "%Y-%m-%d %H:%M:%S").timestamp())
+        except ValueError:
+            return 0
+
+    @staticmethod
+    def _build_live_url(web_rid: str, room_id: str) -> str:
+        base = web_rid or room_id
+        if not base:
+            return ""
+        params = {
+            "action_type": "click",
+            "enter_from_merge": "web_others_homepage",
+            "enter_method": "web_homepage_head",
+            "enter_method_temai": "web_video_head",
+            "group_id": "undefined",
+            "is_livehead_preview_mini_window_show": "",
+            "is_replaced_live": "0",
+            "live_position": "undefined",
+            "mini_window_show_type": "",
+            "request_id": "undefined",
+            "room_id": room_id or "undefined",
+            "search_tab": "undefined",
+            "web_card_rank": "",
+            "web_live_page": "",
+        }
+        return f"https://live.douyin.com/{base}?{urlencode(params)}"
+
+    def _build_video_feed_item(self, row: dict) -> tuple[int, DouyinClientFeedItem]:
+        create_ts = int(row.get("create_ts") or 0)
+        aweme_id = row.get("aweme_id", "")
+        item = DouyinClientFeedItem(
+            type="video",
+            sec_user_id=row.get("sec_user_id", ""),
+            uid=row.get("uid", ""),
+            nickname=row.get("nickname", ""),
+            avatar=row.get("avatar", ""),
+            title=row.get("desc", "") or aweme_id,
+            cover=row.get("cover", ""),
+            sort_time=self._format_timestamp(create_ts),
+            aweme_id=aweme_id,
+            play_count=int(row.get("play_count") or 0),
+            video_url=f"https://www.douyin.com/video/{aweme_id}" if aweme_id else "",
+            width=int(row.get("width") or 0),
+            height=int(row.get("height") or 0),
+        )
+        return create_ts, item
+
+    def _build_live_feed_item(self, row: dict) -> tuple[int, DouyinClientFeedItem]:
+        sec_user_id = row.get("sec_user_id", "")
+        live_info = self._get_cached_live_info(sec_user_id) or {}
+        room = live_info.get("room") if isinstance(live_info, dict) else None
+        room = room if isinstance(room, dict) else {}
+        web_rid = live_info.get("web_rid", "") if isinstance(live_info, dict) else ""
+        room_id = live_info.get("room_id", "") if isinstance(live_info, dict) else ""
+        cover = room.get("cover") or row.get("cover", "")
+        title = room.get("title") or live_info.get("title", "") or "直播中"
+        live_width = int(room.get("width") or row.get("live_width") or 0)
+        live_height = int(room.get("height") or row.get("live_height") or 0)
+        item = DouyinClientFeedItem(
+            type="live",
+            sec_user_id=sec_user_id,
+            uid=row.get("uid", ""),
+            nickname=row.get("nickname", ""),
+            avatar=row.get("avatar", ""),
+            title=title,
+            cover=cover,
+            sort_time=row.get("last_live_at", ""),
+            room_id=str(room_id) if room_id else "",
+            web_rid=str(web_rid) if web_rid else "",
+            live_url=self._build_live_url(str(web_rid), str(room_id)),
+            last_live_at=row.get("last_live_at", ""),
+            flv_pull_url=room.get("flv_pull_url") or {},
+            hls_pull_url_map=room.get("hls_pull_url_map") or {},
+            width=live_width,
+            height=live_height,
+        )
+        sort_ts = self._parse_datetime_ts(row.get("last_live_at", ""))
+        return sort_ts, item
+
+    @staticmethod
+    def _unwrap_detail_data(data: dict) -> dict:
+        if not isinstance(data, dict):
+            return {}
+        if "aweme_detail" in data and isinstance(data.get("aweme_detail"), dict):
+            return data.get("aweme_detail") or {}
+        if "aweme_detail_list" in data:
+            detail_list = data.get("aweme_detail_list") or []
+            if detail_list and isinstance(detail_list[0], dict):
+                return detail_list[0]
+        return data
+
+    @classmethod
+    def _extract_detail_cover(cls, data: dict) -> str:
+        detail = cls._unwrap_detail_data(data)
+        video = detail.get("video") if isinstance(detail, dict) else None
+        if not isinstance(video, dict):
+            return ""
+        for key in ("cover", "origin_cover", "dynamic_cover"):
+            url = cls._extract_first_url(video.get(key))
+            if url:
+                return url
+        return ""
+
+    @classmethod
+    def _extract_detail_video_url(cls, data: dict) -> str:
+        detail = cls._unwrap_detail_data(data)
+        video = detail.get("video") if isinstance(detail, dict) else None
+        if not isinstance(video, dict):
+            return ""
+        bit_rate = video.get("bit_rate")
+        if isinstance(bit_rate, list) and bit_rate:
+            try:
+                items = []
+                for item in bit_rate:
+                    if not isinstance(item, dict):
+                        continue
+                    play_addr = item.get("play_addr") if isinstance(item.get("play_addr"), dict) else {}
+                    url_list = play_addr.get("url_list") or []
+                    items.append(
+                        (
+                            int(item.get("FPS") or 0),
+                            int(item.get("bit_rate") or 0),
+                            int(play_addr.get("data_size") or 0),
+                            int(play_addr.get("height") or 0),
+                            int(play_addr.get("width") or 0),
+                            url_list,
+                        )
+                    )
+                items.sort(
+                    key=lambda x: (
+                        max(x[3], x[4]),
+                        x[0],
+                        x[1],
+                        x[2],
+                    )
+                )
+                if items:
+                    url_list = items[-1][-1]
+                    if isinstance(url_list, list) and url_list:
+                        return str(url_list[VIDEO_INDEX])
+            except Exception:
+                pass
+        for key in ("play_addr", "play_addr_h264", "play_addr_bytevc1"):
+            url = cls._extract_first_url(video.get(key))
+            if url:
+                return url
+        return ""
+
+    @classmethod
+    def _extract_detail_size(cls, data: dict) -> tuple[int, int]:
+        detail = cls._unwrap_detail_data(data)
+        video = detail.get("video") if isinstance(detail, dict) else None
+        return cls._extract_video_size(video)
+
+    @staticmethod
+    def _is_m3u8_resource(url: str, content_type: str = "") -> bool:
+        if content_type and "mpegurl" in content_type.lower():
+            return True
+        return url.lower().split("?")[0].endswith(".m3u8")
+
+    @staticmethod
+    def _proxy_stream_url(url: str) -> str:
+        return f"/client/douyin/stream?url={quote(url, safe='')}"
+
+    @classmethod
+    def _rewrite_m3u8(cls, content: str, base_url: str) -> str:
+        if not content:
+            return ""
+        lines = []
+        for line in content.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                lines.append("")
+                continue
+            if stripped.startswith("#"):
+                if "URI=" in stripped:
+                    line = re.sub(
+                        r'URI="([^"]+)"',
+                        lambda match: f'URI="{cls._proxy_stream_url(urljoin(base_url, match.group(1)))}"',
+                        line,
+                    )
+                    line = re.sub(
+                        r"URI='([^']+)'",
+                        lambda match: f"URI='{cls._proxy_stream_url(urljoin(base_url, match.group(1)))}'",
+                        line,
+                    )
+                lines.append(line)
+                continue
+            lines.append(cls._proxy_stream_url(urljoin(base_url, stripped)))
+        return "\n".join(lines)
+
+    def _build_stream_headers(self, url: str, range_header: str | None) -> dict:
+        parsed = urlparse(url)
+        host = parsed.netloc.lower()
+        if "live.douyin.com" in host:
+            origin = "https://live.douyin.com"
+            referer = "https://live.douyin.com/"
+        else:
+            origin = "https://www.douyin.com"
+            referer = "https://www.douyin.com/"
+        headers = {
+            "User-Agent": self.parameter.headers.get("User-Agent", ""),
+            "Referer": referer,
+            "Origin": origin,
+        }
+        if range_header:
+            headers["Range"] = range_header
+        return headers
+
+    def _build_probe_headers(self, url: str) -> str:
+        headers = self._build_stream_headers(url, None)
+        lines = [f"{key}: {value}" for key, value in headers.items() if value]
+        if not lines:
+            return ""
+        return "\r\n".join(lines) + "\r\n"
+
+    async def _probe_media_size(self, url: str) -> tuple[int, int]:
+        if not url:
+            return 0, 0
+        ffprobe_path = which("ffprobe")
+        if not ffprobe_path:
+            return 0, 0
+        header_text = self._build_probe_headers(url)
+        user_agent = self.parameter.headers.get("User-Agent", "")
+        command = [
+            ffprobe_path,
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0:s=x",
+        ]
+        if header_text:
+            command += ["-headers", header_text]
+        if user_agent:
+            command += ["-user_agent", user_agent]
+        command += [
+            "-rw_timeout",
+            str(self.MEDIA_PROBE_TIMEOUT * 1_000_000),
+            url,
+        ]
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=PIPE,
+                stderr=PIPE,
+            )
+        except OSError:
+            return 0, 0
+        try:
+            stdout, _ = await asyncio.wait_for(
+                process.communicate(),
+                timeout=self.MEDIA_PROBE_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            process.kill()
+            with suppress(Exception):
+                await process.wait()
+            return 0, 0
+        output = stdout.decode("utf-8", errors="ignore").strip()
+        match = re.search(r"(\d+)x(\d+)", output)
+        if not match:
+            return 0, 0
+        return int(match.group(1)), int(match.group(2))
+
+    @staticmethod
+    def _pick_live_stream_url(room: dict) -> str:
+        if not isinstance(room, dict):
+            return ""
+        hls_map = room.get("hls_pull_url_map") or {}
+        flv_map = room.get("flv_pull_url") or {}
+        hls_values = hls_map.values() if isinstance(hls_map, dict) else []
+        flv_values = flv_map.values() if isinstance(flv_map, dict) else []
+        for value in hls_values:
+            if value:
+                return str(value)
+        for value in flv_values:
+            if value:
+                return str(value)
+        return ""
+
+    async def _fetch_douyin_detail(
+        self,
+        detail_id: str,
+        cookie: str,
+        proxy: str = None,
+    ) -> dict:
+        return await self.handle_detail_single(
+            DetailFetcher,
+            cookie,
+            proxy,
+            detail_id,
+        )
+
+    async def _fetch_douyin_detail_with_pool(
+        self,
+        detail_id: str,
+        proxy: str = None,
+    ) -> tuple[dict | None, int | None]:
+        cookies = await self.database.list_douyin_cookies(status="active")
+        if not cookies:
+            data = await self._fetch_douyin_detail(detail_id, "", proxy=proxy)
+            return data, None
+        for item in cookies:
+            cookie_value = item.get("cookie", "")
+            try:
+                data = await asyncio.wait_for(
+                    self._fetch_douyin_detail(
+                        detail_id,
+                        cookie_value,
+                        proxy=proxy,
+                    ),
+                    timeout=self.USER_FETCH_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                await self.database.mark_douyin_cookie_expired(item.get("id", 0))
+                continue
+            if data:
+                return data, item.get("id", 0)
+        data = await self._fetch_douyin_detail(detail_id, "", proxy=proxy)
+        return data, None
+
+    async def _build_daily_feed_page(
+        self,
+        page: int,
+        page_size: int,
+    ) -> DouyinClientFeedPage:
+        page = max(page, 1)
+        page_size = min(max(page_size, 1), 100)
+        today = self._today_str()
+        video_total = await self.database.count_douyin_works_today(today)
+        live_total = await self.database.count_douyin_live_today(today)
+        fetch_size = page * page_size
+        video_rows = await self.database.list_douyin_works_today(
+            today,
+            1,
+            fetch_size,
+        )
+        live_rows = await self.database.list_douyin_live_today(
+            today,
+            1,
+            fetch_size,
+        )
+        items_with_sort = [
+            self._build_video_feed_item(row) for row in video_rows
+        ] + [self._build_live_feed_item(row) for row in live_rows]
+        items_with_sort.sort(key=lambda item: item[0], reverse=True)
+        start = (page - 1) * page_size
+        end = start + page_size
+        items = [item for _, item in items_with_sort[start:end]]
+        return DouyinClientFeedPage(
+            total=video_total + live_total,
+            video_total=video_total,
+            live_total=live_total,
+            items=items,
         )
 
     async def _fetch_douyin_account_page(
@@ -838,6 +1300,28 @@ class APIServer(TikTok):
         live_info["room"] = room_list[0] if room_list else None
         return live_info
 
+    async def _fill_work_sizes(self, works: list[dict]) -> None:
+        if not works:
+            return
+        semaphore = asyncio.Semaphore(self.MEDIA_PROBE_CONCURRENCY)
+
+        async def probe(item: dict) -> None:
+            if item.get("width") and item.get("height"):
+                item.pop("play_url", None)
+                return
+            url = item.get("play_url") or ""
+            if not url:
+                item.pop("play_url", None)
+                return
+            async with semaphore:
+                width, height = await self._probe_media_size(url)
+            if width and height:
+                item["width"] = width
+                item["height"] = height
+            item.pop("play_url", None)
+
+        await asyncio.gather(*(probe(item) for item in works))
+
     async def _refresh_user_latest(self, sec_user_id: str) -> dict:
         data, next_cursor, has_more, cookie_id, cookie_invalid, empty_data = await self._fetch_douyin_account_page_with_pool(
             sec_user_id,
@@ -861,6 +1345,7 @@ class APIServer(TikTok):
         works = [self._extract_work_brief(item, sec_user_id) for item in video_items]
         today = self._today_str()
         today_works = [item for item in works if item.get("create_date") == today]
+        await self._fill_work_sizes(today_works)
         inserted = await self.database.insert_douyin_works(today_works)
         if today_works:
             await self.database.update_douyin_user_new(sec_user_id, True)
@@ -900,6 +1385,21 @@ class APIServer(TikTok):
         live_info = await self._build_live_info(extract)
         is_live = bool(live_info and live_info.get("live_status"))
         await self.database.update_douyin_user_live(sec_user_id, is_live)
+        if live_info and is_live:
+            room = live_info.get("room") if isinstance(live_info, dict) else None
+            if isinstance(room, dict):
+                width = int(room.get("width") or 0)
+                height = int(room.get("height") or 0)
+                if not width or not height:
+                    stream_url = self._pick_live_stream_url(room)
+                    if stream_url:
+                        width, height = await self._probe_media_size(stream_url)
+                if width and height:
+                    room["width"] = width
+                    room["height"] = height
+                    await self.database.update_douyin_user_live_size(
+                        sec_user_id, width, height
+                    )
         if live_info:
             self._cache_live_info(sec_user_id, live_info)
         return live_info or {}
@@ -980,6 +1480,15 @@ class APIServer(TikTok):
                 StaticFiles(directory=admin_root, html=True),
                 name="admin-ui",
             )
+        client_root = (
+            Path(__file__).resolve().parent.parent.parent.joinpath("static", "client")
+        )
+        if client_root.exists():
+            self.server.mount(
+                "/client-ui",
+                StaticFiles(directory=client_root, html=True),
+                name="client-ui",
+            )
 
         @self.server.on_event("startup")
         async def startup_schedule():
@@ -1023,10 +1532,7 @@ class APIServer(TikTok):
             parsed = urlparse(url)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                 raise HTTPException(status_code=400, detail=_("无效资源地址"))
-            headers = {
-                "User-Agent": self.parameter.headers.get("User-Agent", ""),
-                "Referer": "https://www.douyin.com/",
-            }
+            headers = self._build_stream_headers(url, None)
             try:
                 resp = await self.parameter.client.get(url, headers=headers)
                 resp.raise_for_status()
@@ -1034,6 +1540,78 @@ class APIServer(TikTok):
                 raise HTTPException(status_code=502, detail=_("图片获取失败"))
             content_type = resp.headers.get("Content-Type") or "image/jpeg"
             return Response(content=resp.content, media_type=content_type)
+
+        @self.server.get(
+            "/client/douyin/media",
+            summary=_("代理获取抖音图片资源"),
+            tags=[_("客户端")],
+            response_class=Response,
+        )
+        async def proxy_douyin_media_client(
+            url: str = Query(..., min_length=8),
+        ):
+            parsed = urlparse(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise HTTPException(status_code=400, detail=_("无效资源地址"))
+            headers = self._build_stream_headers(url, None)
+            try:
+                resp = await self.parameter.client.get(url, headers=headers)
+                resp.raise_for_status()
+            except Exception:
+                raise HTTPException(status_code=502, detail=_("图片获取失败"))
+            content_type = resp.headers.get("Content-Type") or "image/jpeg"
+            return Response(content=resp.content, media_type=content_type)
+
+        @self.server.get(
+            "/client/douyin/stream",
+            summary=_("代理获取抖音媒体资源"),
+            tags=[_("客户端")],
+            response_class=Response,
+        )
+        async def proxy_douyin_stream_client(
+            request: Request,
+            url: str = Query(..., min_length=8),
+        ):
+            parsed = urlparse(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise HTTPException(status_code=400, detail=_("无效资源地址"))
+            range_header = request.headers.get("range") if request else None
+            headers = self._build_stream_headers(url, range_header)
+            stream = self.parameter.client.stream("GET", url, headers=headers)
+            try:
+                resp = await stream.__aenter__()
+            except Exception:
+                raise HTTPException(status_code=502, detail=_("资源获取失败"))
+            if resp.status_code >= 400:
+                await stream.__aexit__(None, None, None)
+                raise HTTPException(status_code=502, detail=_("资源获取失败"))
+            content_type = resp.headers.get("Content-Type") or "application/octet-stream"
+            if self._is_m3u8_resource(url, content_type):
+                body = await resp.aread()
+                await stream.__aexit__(None, None, None)
+                text = body.decode("utf-8", errors="ignore")
+                return Response(
+                    content=self._rewrite_m3u8(text, url),
+                    media_type="application/vnd.apple.mpegurl",
+                )
+            response_headers = {}
+            for key in ("Content-Length", "Content-Range", "Accept-Ranges"):
+                if resp.headers.get(key):
+                    response_headers[key] = resp.headers.get(key)
+
+            async def iterator():
+                try:
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
+                finally:
+                    await stream.__aexit__(None, None, None)
+
+            return StreamingResponse(
+                iterator(),
+                status_code=resp.status_code,
+                headers=response_headers,
+                media_type=content_type,
+            )
 
         @self.server.get(
             "/token",
@@ -1517,6 +2095,94 @@ class APIServer(TikTok):
             return DouyinUserPage(
                 total=total,
                 items=[DouyinUser(**self._normalize_user_row(i)) for i in rows],
+            )
+
+        @self.server.get(
+            "/admin/douyin/daily/feed",
+            summary=_("获取当天作品与直播播放列表"),
+            tags=[_("管理")],
+            response_model=DouyinClientFeedPage,
+        )
+        async def list_douyin_daily_feed(
+            page: int = 1,
+            page_size: int = 30,
+            token: str = Depends(token_dependency),
+        ):
+            return await self._build_daily_feed_page(page, page_size)
+
+        @self.server.get(
+            "/client/douyin/daily/feed",
+            summary=_("获取当天作品与直播播放列表"),
+            tags=[_("客户端")],
+            response_model=DouyinClientFeedPage,
+        )
+        async def list_douyin_daily_feed_client(
+            page: int = 1,
+            page_size: int = 30,
+        ):
+            return await self._build_daily_feed_page(page, page_size)
+
+        @self.server.get(
+            "/client/douyin/detail",
+            summary=_("获取单个作品播放信息"),
+            tags=[_("客户端")],
+            response_model=DataResponse,
+        )
+        async def get_client_detail(
+            aweme_id: str = Query(..., min_length=6),
+        ):
+            data, cookie_id = await self._fetch_douyin_detail_with_pool(aweme_id)
+            if cookie_id and data:
+                await self.database.touch_douyin_cookie(cookie_id)
+            if not data:
+                raise HTTPException(status_code=404, detail=_("未获取到作品信息"))
+            detail = self._unwrap_detail_data(data)
+            author = detail.get("author") if isinstance(detail, dict) else None
+            author = author if isinstance(author, dict) else {}
+            payload = {
+                "aweme_id": aweme_id,
+                "title": detail.get("desc", "") if isinstance(detail, dict) else "",
+                "cover": self._extract_detail_cover(detail),
+                "video_url": self._extract_detail_video_url(detail),
+                "type": "note" if detail.get("images") else "video",
+                "sec_user_id": author.get("sec_uid")
+                or author.get("secUid")
+                or author.get("sec_user_id")
+                or "",
+                "nickname": author.get("nickname", ""),
+                "avatar": self._extract_first_url(author.get("avatar_larger"))
+                or self._extract_first_url(author.get("avatar_medium"))
+                or self._extract_first_url(author.get("avatar_thumb")),
+            }
+            width, height = self._extract_detail_size(detail)
+            if (not width or not height) and payload.get("type") == "video":
+                video_url = payload.get("video_url") or ""
+                if video_url:
+                    width, height = await self._probe_media_size(video_url)
+            payload["width"] = width
+            payload["height"] = height
+            if width and height:
+                await self.database.update_douyin_work_size(aweme_id, width, height)
+            return DataResponse(
+                message=_("请求成功"),
+                data=payload,
+                params={"aweme_id": aweme_id},
+            )
+
+        @self.server.post(
+            "/client/douyin/users/{sec_user_id}/live",
+            summary=_("获取抖音用户直播状态"),
+            tags=[_("客户端")],
+            response_model=DataResponse,
+        )
+        async def fetch_douyin_user_live_client(
+            sec_user_id: str,
+        ):
+            live_info = await self._refresh_user_live(sec_user_id)
+            return DataResponse(
+                message=_("请求成功"),
+                data=live_info,
+                params={"sec_user_id": sec_user_id},
             )
 
         @self.server.post(

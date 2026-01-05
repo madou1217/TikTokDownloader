@@ -48,6 +48,8 @@ class DouyinWork(BaseModel):
     nickname: str = ""
     cover: str = ""
     play_count: int = 0
+    width: int = 0
+    height: int = 0
 
 
 class DouyinWorkPage(BaseModel):
@@ -59,6 +61,35 @@ class DouyinWorkPage(BaseModel):
 class DouyinDailyWorkPage(BaseModel):
     total: int
     items: list[DouyinWork]
+
+
+class DouyinClientFeedItem(BaseModel):
+    type: str
+    sec_user_id: str = ""
+    uid: str = ""
+    nickname: str = ""
+    avatar: str = ""
+    title: str = ""
+    cover: str = ""
+    sort_time: str = ""
+    aweme_id: str = ""
+    play_count: int = 0
+    video_url: str = ""
+    width: int = 0
+    height: int = 0
+    room_id: str = ""
+    web_rid: str = ""
+    live_url: str = ""
+    last_live_at: str = ""
+    flv_pull_url: dict = Field(default_factory=dict)
+    hls_pull_url_map: dict = Field(default_factory=dict)
+
+
+class DouyinClientFeedPage(BaseModel):
+    total: int
+    video_total: int
+    live_total: int
+    items: list[DouyinClientFeedItem]
 
 
 class DouyinWorkListPage(BaseModel):

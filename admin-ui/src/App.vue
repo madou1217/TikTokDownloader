@@ -48,6 +48,21 @@ import ToastStack from "./components/ToastStack.vue";
 const route = useRoute();
 const toasts = ref([]);
 let toastId = 0;
+const rawApiBase = import.meta.env.VITE_API_BASE || "";
+const apiBase = rawApiBase.endsWith("/") ? rawApiBase.slice(0, -1) : rawApiBase;
+
+const buildApiUrl = (path) => {
+  if (!apiBase) {
+    return path;
+  }
+  if (path.startsWith("http://") || path.startsWith("https://")) {
+    return path;
+  }
+  if (path.startsWith("/")) {
+    return `${apiBase}${path}`;
+  }
+  return `${apiBase}/${path}`;
+};
 
 const setAlert = (type, message) => {
   if (!message) {
@@ -85,7 +100,7 @@ const formatErrorMessage = (detail) => {
 
 const apiRequest = async (path, options = {}) => {
   const headers = options.body ? { "Content-Type": "application/json" } : {};
-  const response = await fetch(path, {
+  const response = await fetch(buildApiUrl(path), {
     method: options.method || "GET",
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined,

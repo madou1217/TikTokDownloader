@@ -25,6 +25,8 @@ from .admin import (
     DouyinWork,
     DouyinWorkPage,
     DouyinDailyWorkPage,
+    DouyinClientFeedItem,
+    DouyinClientFeedPage,
     DouyinWorkListPage,
     DouyinScheduleSetting,
 )
@@ -60,6 +62,8 @@ __all__ = (
     "DouyinWork",
     "DouyinWorkPage",
     "DouyinDailyWorkPage",
+    "DouyinClientFeedItem",
+    "DouyinClientFeedPage",
     "DouyinWorkListPage",
     "DouyinScheduleSetting",
 )

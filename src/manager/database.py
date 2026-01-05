@@ -60,6 +60,8 @@ class Database:
             has_works INTEGER NOT NULL DEFAULT 0,
             status TEXT NOT NULL DEFAULT 'unknown',
             is_live INTEGER NOT NULL DEFAULT 0,
+            live_width INTEGER NOT NULL DEFAULT 0,
+            live_height INTEGER NOT NULL DEFAULT 0,
             has_new_today INTEGER NOT NULL DEFAULT 0,
             auto_update INTEGER NOT NULL DEFAULT 0,
             update_window_start TEXT NOT NULL DEFAULT '',
@@ -95,6 +97,8 @@ class Database:
             create_date TEXT NOT NULL DEFAULT '',
             cover TEXT NOT NULL DEFAULT '',
             play_count INTEGER NOT NULL DEFAULT 0,
+            width INTEGER NOT NULL DEFAULT 0,
+            height INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL
             );"""
         )
@@ -113,6 +117,8 @@ class Database:
     async def __ensure_columns(self) -> None:
         columns = {
             "is_live": "INTEGER NOT NULL DEFAULT 0",
+            "live_width": "INTEGER NOT NULL DEFAULT 0",
+            "live_height": "INTEGER NOT NULL DEFAULT 0",
             "has_new_today": "INTEGER NOT NULL DEFAULT 0",
             "auto_update": "INTEGER NOT NULL DEFAULT 0",
             "update_window_start": "TEXT NOT NULL DEFAULT ''",
@@ -134,6 +140,8 @@ class Database:
         work_columns = {
             "cover": "TEXT NOT NULL DEFAULT ''",
             "play_count": "INTEGER NOT NULL DEFAULT 0",
+            "width": "INTEGER NOT NULL DEFAULT 0",
+            "height": "INTEGER NOT NULL DEFAULT 0",
         }
         for name, ddl in work_columns.items():
             if name not in work_existing:
@@ -363,6 +371,37 @@ class Database:
         )
         await self.database.commit()
 
+    async def update_douyin_user_live_size(
+        self,
+        sec_user_id: str,
+        width: int,
+        height: int,
+    ) -> None:
+        if not width or not height:
+            return
+        now = self._now_str()
+        await self.database.execute(
+            """UPDATE douyin_user
+            SET live_width=?, live_height=?, updated_at=?
+            WHERE sec_user_id=?;""",
+            (int(width), int(height), now, sec_user_id),
+        )
+        await self.database.commit()
+
+    async def update_douyin_work_size(
+        self,
+        aweme_id: str,
+        width: int,
+        height: int,
+    ) -> None:
+        if not aweme_id or not width or not height:
+            return
+        await self.database.execute(
+            "UPDATE douyin_work SET width=?, height=? WHERE aweme_id=?;",
+            (int(width), int(height), aweme_id),
+        )
+        await self.database.commit()
+
     async def update_douyin_user_new(
         self,
         sec_user_id: str,
@@ -479,15 +518,17 @@ class Database:
             cursor = await self.database.execute(
                 """INSERT INTO douyin_work (
                 sec_user_id, aweme_id, desc, create_ts, create_date,
-                cover, play_count, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                cover, play_count, width, height, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(aweme_id) DO UPDATE SET
                     sec_user_id=excluded.sec_user_id,
                     desc=excluded.desc,
                     create_ts=excluded.create_ts,
                     create_date=excluded.create_date,
                     cover=excluded.cover,
-                    play_count=excluded.play_count;""",
+                    play_count=excluded.play_count,
+                    width=excluded.width,
+                    height=excluded.height;""",
                 (
                     item.get("sec_user_id", ""),
                     item.get("aweme_id", ""),
@@ -496,6 +537,8 @@ class Database:
                     item.get("create_date", ""),
                     item.get("cover", ""),
                     int(item.get("play_count") or 0),
+                    int(item.get("width") or 0),
+                    int(item.get("height") or 0),
                     now,
                 ),
             )
@@ -537,7 +580,7 @@ class Database:
         offset = (page - 1) * page_size
         await self.cursor.execute(
             """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
-            w.cover, w.play_count, u.nickname
+            w.cover, w.play_count, w.width, w.height, u.nickname, u.avatar, u.uid
             FROM douyin_work w
             LEFT JOIN douyin_user u ON w.sec_user_id = u.sec_user_id
             WHERE w.create_date=?
@@ -559,7 +602,7 @@ class Database:
         offset = (page - 1) * page_size
         await self.cursor.execute(
             """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
-            w.cover, w.play_count, u.nickname
+            w.cover, w.play_count, w.width, w.height, u.nickname, u.avatar, u.uid
             FROM douyin_work w
             LEFT JOIN douyin_user u ON w.sec_user_id = u.sec_user_id
             WHERE w.create_date=? AND w.sec_user_id=?
@@ -588,7 +631,7 @@ class Database:
         offset = (page - 1) * page_size
         await self.cursor.execute(
             """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
-            w.cover, w.play_count, u.nickname
+            w.cover, w.play_count, w.width, w.height, u.nickname, u.avatar, u.uid
             FROM douyin_work w
             LEFT JOIN douyin_user u ON w.sec_user_id = u.sec_user_id
             WHERE w.sec_user_id=?
@@ -617,9 +660,10 @@ class Database:
         page_size = max(page_size, 1)
         offset = (page - 1) * page_size
         await self.cursor.execute(
-            """SELECT id, sec_user_id, uid, nickname, has_works, status,
-            is_live, has_new_today, auto_update, update_window_start, update_window_end,
-            last_live_at, last_new_at, last_fetch_at, created_at, updated_at
+            """SELECT id, sec_user_id, uid, nickname, avatar, cover, has_works, status,
+            is_live, live_width, live_height, has_new_today, auto_update,
+            update_window_start, update_window_end, last_live_at, last_new_at,
+            last_fetch_at, created_at, updated_at
             FROM douyin_user
             WHERE is_live=1 AND substr(last_live_at, 1, 10)=?
             ORDER BY last_live_at DESC

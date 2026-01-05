@@ -1,1 +1,4683 @@
-{"openapi":"3.1.0","info":{"title":"DouK-Downloader","version":"5.8.beta"},"paths":{"/":{"get":{"tags":["项目"],"summary":"访问项目 GitHub 仓库","description":"重定向至项目 GitHub 仓库主页","operationId":"index__get","responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{}}}}}}},"/token":{"get":{"tags":["项目"],"summary":"测试令牌有效性","description":"项目默认无需令牌；公开部署时，建议设置令牌以防止恶意请求！\n\n令牌设置位置：`src/custom/function.py` - `is_valid_token()`","operationId":"handle_test_token_get","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/DataResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/settings":{"post":{"tags":["配置"],"summary":"更新项目全局配置","description":"更新项目配置文件 settings.json\n\n仅需传入需要更新的配置参数\n\n返回更新后的全部配置参数","operationId":"handle_settings_settings_post","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Settings"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Settings"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}},"get":{"tags":["配置"],"summary":"获取项目全局配置","description":"返回项目全部配置参数","operationId":"get_settings_settings_get","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Settings"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/douyin/share":{"post":{"tags":["抖音"],"summary":"获取分享链接重定向的完整链接","description":"**参数**:\n\n- **text**: 包含分享链接的字符串；必需参数\n- **proxy**: 代理；可选参数","operationId":"handle_share_douyin_share_post","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/ShortUrl"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/UrlResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/douyin/detail":{"post":{"tags":["抖音"],"summary":"获取单个作品数据","description":"**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **detail_id**: 抖音作品 ID；必需参数","operationId":"handle_detail_douyin_detail_post","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Detail"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/DataResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/douyin/account":{"post":{"tags":["抖音"],"summary":"获取账号作品数据","description":"**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **sec_user_id**: 抖音账号 sec_uid；必需参数\n- **tab**: 账号页面类型；可选参数，默认值：`post`\n- **earliest**: 作品最早发布日期；可选参数\n- **latest**: 作品最晚发布日期；可选参数\n- **pages**: 最大请求次数，仅对请求账号喜欢页数据有效；可选参数\n- **cursor**: 可选参数\n- **count**: 可选参数","operationId":"handle_account_douyin_account_post","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Account"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/DataResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/douyin/account/live":{"post":{"tags":["抖音"],"summary":"查询账号直播状态与直播间数据","description":"**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **dump_html**: 是否保存原始 HTML 到本地；可选参数，默认值：True\n- **sec_user_id**: 抖音账号 sec_uid；必需参数","operationId":"handle_account_live_douyin_account_live_post","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/AccountLive"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/DataResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/douyin/mix":{"post":{"tags":["抖音"],"summary":"获取合集作品数据","description":"**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **mix_id**: 抖音合集 ID\n- **detail_id**: 属于合集的抖音作品 ID\n- **cursor**: 可选参数\n- **count**: 可选参数\n\n**`mix_id` 和 `detail_id` 二选一，只需传入其中之一即可**","operationId":"handle_mix_douyin_mix_post","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Mix"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/DataResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/douyin/live":{"post":{"tags":["抖音"],"summary":"获取直播数据","description":"**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **web_rid**: 抖音直播 web_rid","operationId":"handle_live_douyin_live_post","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Live"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/DataResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/douyin/comment":{"post":{"tags":["抖音"],"summary":"获取作品评论数据","description":"**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **detail_id**: 抖音作品 ID；必需参数\n- **pages**: 最大请求次数；可选参数\n- **cursor**: 可选参数\n- **count**: 可选参数\n- **count_reply**: 可选参数\n- **reply**: 可选参数，默认值：False","operationId":"handle_comment_douyin_comment_post","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Comment"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/DataResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/douyin/reply":{"post":{"tags":["抖音"],"summary":"获取评论回复数据","description":"**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **detail_id**: 抖音作品 ID；必需参数\n- **comment_id**: 评论 ID；必需参数\n- **pages**: 最大请求次数；可选参数\n- **cursor**: 可选参数\n- **count**: 可选参数","operationId":"handle_reply_douyin_reply_post","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Reply"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/DataResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/douyin/search/general":{"post":{"tags":["抖音"],"summary":"获取综合搜索数据","description":"**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **keyword**: 关键词；必需参数\n- **offset**: 起始页码；可选参数\n- **count**: 数据数量；可选参数\n- **pages**: 总页数；可选参数\n- **sort_type**: 排序依据；可选参数\n- **publish_time**: 发布时间；可选参数\n- **duration**: 视频时长；可选参数\n- **search_range**: 搜索范围；可选参数\n- **content_type**: 内容形式；可选参数\n\n**部分参数传入规则请查阅文档**: [参数含义](https://github.com/JoeanAmier/TikTokDownloader/wiki/Documentation#%E9%87%87%E9%9B%86%E6%90%9C%E7%B4%A2%E7%BB%93%E6%9E%9C%E6%95%B0%E6%8D%AE%E6%8A%96%E9%9F%B3)","operationId":"handle_search_general_douyin_search_general_post","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/GeneralSearch"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/DataResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/douyin/search/video":{"post":{"tags":["抖音"],"summary":"获取视频搜索数据","description":"**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **keyword**: 关键词；必需参数\n- **offset**: 起始页码；可选参数\n- **count**: 数据数量；可选参数\n- **pages**: 总页数；可选参数\n- **sort_type**: 排序依据；可选参数\n- **publish_time**: 发布时间；可选参数\n- **duration**: 视频时长；可选参数\n- **search_range**: 搜索范围；可选参数\n\n**部分参数传入规则请查阅文档**: [参数含义](https://github.com/JoeanAmier/TikTokDownloader/wiki/Documentation#%E9%87%87%E9%9B%86%E6%90%9C%E7%B4%A2%E7%BB%93%E6%9E%9C%E6%95%B0%E6%8D%AE%E6%8A%96%E9%9F%B3)","operationId":"handle_search_video_douyin_search_video_post","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/VideoSearch"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/DataResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/douyin/search/user":{"post":{"tags":["抖音"],"summary":"获取用户搜索数据","description":"**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **keyword**: 关键词；必需参数\n- **offset**: 起始页码；可选参数\n- **count**: 数据数量；可选参数\n- **pages**: 总页数；可选参数\n- **douyin_user_fans**: 粉丝数量；可选参数\n- **douyin_user_type**: 用户类型；可选参数\n\n**部分参数传入规则请查阅文档**: [参数含义](https://github.com/JoeanAmier/TikTokDownloader/wiki/Documentation#%E9%87%87%E9%9B%86%E6%90%9C%E7%B4%A2%E7%BB%93%E6%9E%9C%E6%95%B0%E6%8D%AE%E6%8A%96%E9%9F%B3)","operationId":"handle_search_user_douyin_search_user_post","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/UserSearch"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/DataResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/douyin/search/live":{"post":{"tags":["抖音"],"summary":"获取直播搜索数据","description":"**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **keyword**: 关键词；必需参数\n- **offset**: 起始页码；可选参数\n- **count**: 数据数量；可选参数\n- **pages**: 总页数；可选参数","operationId":"handle_search_live_douyin_search_live_post","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/LiveSearch"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/DataResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/tiktok/share":{"post":{"tags":["TikTok"],"summary":"获取分享链接重定向的完整链接","description":"**参数**:\n\n- **text**: 包含分享链接的字符串；必需参数\n- **proxy**: 代理；可选参数","operationId":"handle_share_tiktok_tiktok_share_post","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/ShortUrl"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/UrlResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/tiktok/detail":{"post":{"tags":["TikTok"],"summary":"获取单个作品数据","description":"**参数**:\n\n- **cookie**: TikTok Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **detail_id**: TikTok 作品 ID；必需参数","operationId":"handle_detail_tiktok_tiktok_detail_post","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/DetailTikTok"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/DataResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/tiktok/account":{"post":{"tags":["TikTok"],"summary":"获取账号作品数据","description":"**参数**:\n\n- **cookie**: TikTok Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **sec_user_id**: TikTok 账号 secUid；必需参数\n- **tab**: 账号页面类型；可选参数，默认值：`post`\n- **earliest**: 作品最早发布日期；可选参数\n- **latest**: 作品最晚发布日期；可选参数\n- **pages**: 最大请求次数，仅对请求账号喜欢页数据有效；可选参数\n- **cursor**: 可选参数\n- **count**: 可选参数","operationId":"handle_account_tiktok_tiktok_account_post","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/AccountTiktok"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/DataResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/tiktok/mix":{"post":{"tags":["TikTok"],"summary":"获取合辑作品数据","description":"**参数**:\n\n- **cookie**: TikTok Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **mix_id**: TikTok 合集 ID；必需参数\n- **cursor**: 可选参数\n- **count**: 可选参数","operationId":"handle_mix_tiktok_tiktok_mix_post","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/MixTikTok"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/DataResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}},"/tiktok/live":{"post":{"tags":["TikTok"],"summary":"获取直播数据","description":"**参数**:\n\n- **cookie**: TikTok Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **room_id**: TikTok 直播 room_id；必需参数","operationId":"handle_live_tiktok_tiktok_live_post","parameters":[{"name":"token","in":"header","required":false,"schema":{"type":"string","title":"Token"}}],"requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Live"}}}},"responses":{"200":{"description":"Successful Response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/DataResponse"}}}},"422":{"description":"Validation Error","content":{"application/json":{"schema":{"$ref":"#/components/schemas/HTTPValidationError"}}}}}}}},"components":{"schemas":{"Account":{"properties":{"cookie":{"type":"string","title":"Cookie","default":""},"proxy":{"type":"string","title":"Proxy","default":""},"source":{"type":"boolean","title":"Source","default":false},"sec_user_id":{"type":"string","title":"Sec User Id"},"tab":{"type":"string","title":"Tab","default":"post"},"earliest":{"anyOf":[{"type":"string"},{"type":"number"},{"type":"integer"},{"type":"null"}],"title":"Earliest"},"latest":{"anyOf":[{"type":"string"},{"type":"number"},{"type":"integer"},{"type":"null"}],"title":"Latest"},"pages":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Pages"},"cursor":{"type":"integer","title":"Cursor","default":0},"count":{"type":"integer","exclusiveMinimum":0.0,"title":"Count","default":18}},"type":"object","required":["sec_user_id"],"title":"Account"},"AccountLive":{"properties":{"cookie":{"type":"string","title":"Cookie","default":""},"proxy":{"type":"string","title":"Proxy","default":""},"source":{"type":"boolean","title":"Source","default":false},"sec_user_id":{"type":"string","title":"Sec User Id"},"dump_html":{"type":"boolean","title":"Dump Html","default":true}},"type":"object","required":["sec_user_id"],"title":"AccountLive"},"AccountTiktok":{"properties":{"cookie":{"type":"string","title":"Cookie","default":""},"proxy":{"type":"string","title":"Proxy","default":""},"source":{"type":"boolean","title":"Source","default":false},"sec_user_id":{"type":"string","title":"Sec User Id"},"tab":{"type":"string","title":"Tab","default":"post"},"earliest":{"anyOf":[{"type":"string"},{"type":"number"},{"type":"integer"},{"type":"null"}],"title":"Earliest"},"latest":{"anyOf":[{"type":"string"},{"type":"number"},{"type":"integer"},{"type":"null"}],"title":"Latest"},"pages":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Pages"},"cursor":{"type":"integer","title":"Cursor","default":0},"count":{"type":"integer","exclusiveMinimum":0.0,"title":"Count","default":18}},"type":"object","required":["sec_user_id"],"title":"AccountTiktok"},"AccountUrl":{"properties":{"mark":{"type":"string","title":"Mark","default":""},"url":{"type":"string","title":"Url"},"tab":{"type":"string","title":"Tab","default":"post"},"earliest":{"anyOf":[{"type":"string"},{"type":"integer"},{"type":"number"}],"title":"Earliest","default":""},"latest":{"anyOf":[{"type":"string"},{"type":"integer"},{"type":"number"}],"title":"Latest","default":""},"enable":{"type":"boolean","title":"Enable","default":true}},"type":"object","required":["url"],"title":"AccountUrl"},"BrowserInfo":{"properties":{"User-Agent":{"type":"string","title":"User-Agent","default":""},"pc_libra_divert":{"type":"string","title":"Pc Libra Divert","default":""},"browser_language":{"type":"string","title":"Browser Language","default":""},"browser_platform":{"type":"string","title":"Browser Platform","default":""},"browser_name":{"type":"string","title":"Browser Name","default":""},"browser_version":{"type":"string","title":"Browser Version","default":""},"engine_name":{"type":"string","title":"Engine Name","default":""},"engine_version":{"type":"string","title":"Engine Version","default":""},"os_name":{"type":"string","title":"Os Name","default":""},"os_version":{"type":"string","title":"Os Version","default":""},"webid":{"type":"string","title":"Webid","default":""}},"type":"object","title":"BrowserInfo"},"Comment":{"properties":{"cookie":{"type":"string","title":"Cookie","default":""},"proxy":{"type":"string","title":"Proxy","default":""},"source":{"type":"boolean","title":"Source","default":false},"detail_id":{"type":"string","title":"Detail Id"},"pages":{"type":"integer","exclusiveMinimum":0.0,"title":"Pages","default":1},"cursor":{"type":"integer","title":"Cursor","default":0},"count":{"type":"integer","exclusiveMinimum":0.0,"title":"Count","default":20},"count_reply":{"type":"integer","exclusiveMinimum":0.0,"title":"Count Reply","default":3},"reply":{"type":"boolean","title":"Reply","default":false}},"type":"object","required":["detail_id"],"title":"Comment"},"DataResponse":{"properties":{"message":{"type":"string","title":"Message"},"data":{"anyOf":[{"additionalProperties":true,"type":"object"},{"items":{"additionalProperties":true,"type":"object"},"type":"array"},{"type":"null"}],"title":"Data"},"params":{"anyOf":[{"additionalProperties":true,"type":"object"},{"type":"null"}],"title":"Params"},"time":{"type":"string","title":"Time","description":"格式化后的时间字符串","readOnly":true}},"type":"object","required":["message","params","time"],"title":"DataResponse"},"Detail":{"properties":{"cookie":{"type":"string","title":"Cookie","default":""},"proxy":{"type":"string","title":"Proxy","default":""},"source":{"type":"boolean","title":"Source","default":false},"detail_id":{"type":"string","title":"Detail Id"}},"type":"object","required":["detail_id"],"title":"Detail"},"DetailTikTok":{"properties":{"cookie":{"type":"string","title":"Cookie","default":""},"proxy":{"type":"string","title":"Proxy","default":""},"source":{"type":"boolean","title":"Source","default":false},"detail_id":{"type":"string","title":"Detail Id"}},"type":"object","required":["detail_id"],"title":"DetailTikTok"},"GeneralSearch":{"properties":{"cookie":{"type":"string","title":"Cookie","default":""},"proxy":{"type":"string","title":"Proxy","default":""},"source":{"type":"boolean","title":"Source","default":false},"keyword":{"type":"string","title":"Keyword"},"pages":{"type":"integer","exclusiveMinimum":0.0,"title":"Pages","default":1},"offset":{"type":"integer","minimum":0.0,"title":"Offset","default":0},"count":{"type":"integer","minimum":5.0,"title":"Count","default":10},"channel":{"type":"integer","const":0,"title":"Channel","default":0},"sort_type":{"type":"integer","enum":[0,1,2],"title":"Sort Type","default":0},"publish_time":{"type":"integer","enum":[0,1,7,180],"title":"Publish Time","default":0},"duration":{"type":"integer","enum":[0,1,2,3],"title":"Duration","default":0},"search_range":{"type":"integer","enum":[0,1,2,3],"title":"Search Range","default":0},"content_type":{"type":"integer","enum":[0,1,2],"title":"Content Type","default":0}},"type":"object","required":["keyword"],"title":"GeneralSearch"},"HTTPValidationError":{"properties":{"detail":{"items":{"$ref":"#/components/schemas/ValidationError"},"type":"array","title":"Detail"}},"type":"object","title":"HTTPValidationError"},"Live":{"properties":{"cookie":{"type":"string","title":"Cookie","default":""},"proxy":{"type":"string","title":"Proxy","default":""},"source":{"type":"boolean","title":"Source","default":false},"web_rid":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Web Rid"}},"type":"object","title":"Live"},"LiveSearch":{"properties":{"cookie":{"type":"string","title":"Cookie","default":""},"proxy":{"type":"string","title":"Proxy","default":""},"source":{"type":"boolean","title":"Source","default":false},"keyword":{"type":"string","title":"Keyword"},"pages":{"type":"integer","exclusiveMinimum":0.0,"title":"Pages","default":1},"offset":{"type":"integer","minimum":0.0,"title":"Offset","default":0},"count":{"type":"integer","minimum":5.0,"title":"Count","default":10},"channel":{"type":"integer","const":3,"title":"Channel","default":3}},"type":"object","required":["keyword"],"title":"LiveSearch"},"Mix":{"properties":{"cookie":{"type":"string","title":"Cookie","default":""},"proxy":{"type":"string","title":"Proxy","default":""},"source":{"type":"boolean","title":"Source","default":false},"mix_id":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Mix Id"},"detail_id":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Detail Id"},"cursor":{"type":"integer","title":"Cursor","default":0},"count":{"type":"integer","exclusiveMinimum":0.0,"title":"Count","default":12}},"type":"object","title":"Mix"},"MixTikTok":{"properties":{"cookie":{"type":"string","title":"Cookie","default":""},"proxy":{"type":"string","title":"Proxy","default":""},"source":{"type":"boolean","title":"Source","default":false},"mix_id":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Mix Id"},"cursor":{"type":"integer","title":"Cursor","default":0},"count":{"type":"integer","exclusiveMinimum":0.0,"title":"Count","default":30}},"type":"object","title":"MixTikTok"},"MixUrl":{"properties":{"mark":{"type":"string","title":"Mark","default":""},"url":{"type":"string","title":"Url"},"enable":{"type":"boolean","title":"Enable","default":true}},"type":"object","required":["url"],"title":"MixUrl"},"OwnerUrl":{"properties":{"mark":{"type":"string","title":"Mark","default":""},"url":{"type":"string","title":"Url"},"uid":{"type":"string","title":"Uid","default":""},"sec_uid":{"type":"string","title":"Sec Uid","default":""},"nickname":{"type":"string","title":"Nickname","default":""}},"type":"object","required":["url"],"title":"OwnerUrl"},"Reply":{"properties":{"cookie":{"type":"string","title":"Cookie","default":""},"proxy":{"type":"string","title":"Proxy","default":""},"source":{"type":"boolean","title":"Source","default":false},"detail_id":{"type":"string","title":"Detail Id"},"comment_id":{"type":"string","title":"Comment Id"},"pages":{"type":"integer","exclusiveMinimum":0.0,"title":"Pages","default":1},"cursor":{"type":"integer","title":"Cursor","default":0},"count":{"type":"integer","exclusiveMinimum":0.0,"title":"Count","default":3}},"type":"object","required":["detail_id","comment_id"],"title":"Reply"},"Settings":{"properties":{"accounts_urls":{"items":{"$ref":"#/components/schemas/AccountUrl"},"type":"array","title":"Accounts Urls","default":[]},"accounts_urls_tiktok":{"items":{"$ref":"#/components/schemas/AccountUrl"},"type":"array","title":"Accounts Urls Tiktok","default":[]},"mix_urls":{"items":{"$ref":"#/components/schemas/MixUrl"},"type":"array","title":"Mix Urls","default":[]},"mix_urls_tiktok":{"items":{"$ref":"#/components/schemas/MixUrl"},"type":"array","title":"Mix Urls Tiktok","default":[]},"owner_url":{"anyOf":[{"$ref":"#/components/schemas/OwnerUrl"},{"additionalProperties":{"type":"string"},"type":"object"}],"title":"Owner Url","default":{}},"owner_url_tiktok":{"type":"null","title":"Owner Url Tiktok"},"root":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Root"},"folder_name":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Folder Name"},"name_format":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Name Format"},"desc_length":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Desc Length"},"name_length":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Name Length"},"date_format":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Date Format"},"split":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Split"},"folder_mode":{"anyOf":[{"type":"boolean"},{"type":"null"}],"title":"Folder Mode"},"music":{"anyOf":[{"type":"boolean"},{"type":"null"}],"title":"Music"},"truncate":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Truncate"},"storage_format":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Storage Format"},"cookie":{"anyOf":[{"type":"string"},{"additionalProperties":true,"type":"object"}],"title":"Cookie","default":""},"cookie_tiktok":{"anyOf":[{"type":"string"},{"additionalProperties":true,"type":"object"}],"title":"Cookie Tiktok","default":""},"dynamic_cover":{"anyOf":[{"type":"boolean"},{"type":"null"}],"title":"Dynamic Cover"},"static_cover":{"anyOf":[{"type":"boolean"},{"type":"null"}],"title":"Static Cover"},"proxy":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Proxy"},"proxy_tiktok":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Proxy Tiktok"},"twc_tiktok":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Twc Tiktok"},"download":{"anyOf":[{"type":"boolean"},{"type":"null"}],"title":"Download"},"max_size":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Max Size"},"chunk":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Chunk"},"timeout":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Timeout"},"max_retry":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Max Retry"},"max_pages":{"anyOf":[{"type":"integer"},{"type":"null"}],"title":"Max Pages"},"run_command":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Run Command"},"ffmpeg":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Ffmpeg"},"live_qualities":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Live Qualities"},"douyin_platform":{"anyOf":[{"type":"boolean"},{"type":"null"}],"title":"Douyin Platform"},"tiktok_platform":{"anyOf":[{"type":"boolean"},{"type":"null"}],"title":"Tiktok Platform"},"browser_info":{"anyOf":[{"$ref":"#/components/schemas/BrowserInfo"},{"type":"null"}]},"browser_info_tiktok":{"anyOf":[{"$ref":"#/components/schemas/TikTokBrowserInfo"},{"type":"null"}]}},"type":"object","title":"Settings"},"ShortUrl":{"properties":{"text":{"type":"string","title":"Text"},"proxy":{"type":"string","title":"Proxy","default":""}},"type":"object","required":["text"],"title":"ShortUrl"},"TikTokBrowserInfo":{"properties":{"User-Agent":{"type":"string","title":"User-Agent","default":""},"app_language":{"type":"string","title":"App Language","default":""},"browser_language":{"type":"string","title":"Browser Language","default":""},"browser_name":{"type":"string","title":"Browser Name","default":""},"browser_platform":{"type":"string","title":"Browser Platform","default":""},"browser_version":{"type":"string","title":"Browser Version","default":""},"language":{"type":"string","title":"Language","default":""},"os":{"type":"string","title":"Os","default":""},"priority_region":{"type":"string","title":"Priority Region","default":""},"region":{"type":"string","title":"Region","default":""},"tz_name":{"type":"string","title":"Tz Name","default":""},"webcast_language":{"type":"string","title":"Webcast Language","default":""},"device_id":{"type":"string","title":"Device Id","default":""}},"type":"object","title":"TikTokBrowserInfo"},"UrlResponse":{"properties":{"message":{"type":"string","title":"Message"},"url":{"anyOf":[{"type":"string"},{"type":"null"}],"title":"Url"},"params":{"anyOf":[{"additionalProperties":true,"type":"object"},{"type":"null"}],"title":"Params"},"time":{"type":"string","title":"Time","description":"格式化后的时间字符串","readOnly":true}},"type":"object","required":["message","params","time"],"title":"UrlResponse"},"UserSearch":{"properties":{"cookie":{"type":"string","title":"Cookie","default":""},"proxy":{"type":"string","title":"Proxy","default":""},"source":{"type":"boolean","title":"Source","default":false},"keyword":{"type":"string","title":"Keyword"},"pages":{"type":"integer","exclusiveMinimum":0.0,"title":"Pages","default":1},"offset":{"type":"integer","minimum":0.0,"title":"Offset","default":0},"count":{"type":"integer","minimum":5.0,"title":"Count","default":10},"channel":{"type":"integer","const":2,"title":"Channel","default":2},"douyin_user_fans":{"type":"integer","enum":[0,1,2,3,4,5],"title":"Douyin User Fans","default":0},"douyin_user_type":{"type":"integer","enum":[0,1,2,3],"title":"Douyin User Type","default":0}},"type":"object","required":["keyword"],"title":"UserSearch"},"ValidationError":{"properties":{"loc":{"items":{"anyOf":[{"type":"string"},{"type":"integer"}]},"type":"array","title":"Location"},"msg":{"type":"string","title":"Message"},"type":{"type":"string","title":"Error Type"}},"type":"object","required":["loc","msg","type"],"title":"ValidationError"},"VideoSearch":{"properties":{"cookie":{"type":"string","title":"Cookie","default":""},"proxy":{"type":"string","title":"Proxy","default":""},"source":{"type":"boolean","title":"Source","default":false},"keyword":{"type":"string","title":"Keyword"},"pages":{"type":"integer","exclusiveMinimum":0.0,"title":"Pages","default":1},"offset":{"type":"integer","minimum":0.0,"title":"Offset","default":0},"count":{"type":"integer","minimum":5.0,"title":"Count","default":10},"channel":{"type":"integer","const":1,"title":"Channel","default":1},"sort_type":{"type":"integer","enum":[0,1,2],"title":"Sort Type","default":0},"publish_time":{"type":"integer","enum":[0,1,7,180],"title":"Publish Time","default":0},"duration":{"type":"integer","enum":[0,1,2,3],"title":"Duration","default":0},"search_range":{"type":"integer","enum":[0,1,2,3],"title":"Search Range","default":0}},"type":"object","required":["keyword"],"title":"VideoSearch"}}}}
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "DouK-Downloader",
+    "version": "5.8.beta"
+  },
+  "paths": {
+    "/": {
+      "get": {
+        "tags": [
+          "项目"
+        ],
+        "summary": "访问项目 GitHub 仓库",
+        "description": "重定向至项目 GitHub 仓库主页",
+        "operationId": "index__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/douyin/media": {
+      "get": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "代理获取抖音图片资源",
+        "operationId": "proxy_douyin_media_admin_douyin_media_get",
+        "parameters": [
+          {
+            "name": "url",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "title": "Url"
+            }
+          },
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/client/douyin/media": {
+      "get": {
+        "tags": [
+          "客户端"
+        ],
+        "summary": "代理获取抖音图片资源",
+        "operationId": "proxy_douyin_media_client_client_douyin_media_get",
+        "parameters": [
+          {
+            "name": "url",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "title": "Url"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/client/douyin/stream": {
+      "get": {
+        "tags": [
+          "客户端"
+        ],
+        "summary": "代理获取抖音媒体资源",
+        "operationId": "proxy_douyin_stream_client_client_douyin_stream_get",
+        "parameters": [
+          {
+            "name": "url",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "title": "Url"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/token": {
+      "get": {
+        "tags": [
+          "项目"
+        ],
+        "summary": "测试令牌有效性",
+        "description": "项目默认无需令牌；公开部署时，建议设置令牌以防止恶意请求！\n\n令牌设置位置：`src/custom/function.py` - `is_valid_token()`",
+        "operationId": "handle_test_token_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/settings": {
+      "post": {
+        "tags": [
+          "配置"
+        ],
+        "summary": "更新项目全局配置",
+        "description": "更新项目配置文件 settings.json\n\n仅需传入需要更新的配置参数\n\n返回更新后的全部配置参数",
+        "operationId": "handle_settings_settings_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Settings"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "配置"
+        ],
+        "summary": "获取项目全局配置",
+        "description": "返回项目全部配置参数",
+        "operationId": "get_settings_settings_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/douyin/users": {
+      "get": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "获取抖音用户列表",
+        "operationId": "list_douyin_users_admin_douyin_users_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DouyinUser"
+                  },
+                  "title": "Response List Douyin Users Admin Douyin Users Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "新增抖音用户并拉取信息",
+        "operationId": "create_douyin_user_admin_douyin_users_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DouyinUserCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DouyinUser"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/douyin/users/paged": {
+      "get": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "分页获取抖音用户列表",
+        "operationId": "list_douyin_users_paged_admin_douyin_users_paged_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "title": "Page Size"
+            }
+          },
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DouyinUserPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/douyin/users/{sec_user_id}": {
+      "get": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "查询抖音用户",
+        "operationId": "get_douyin_user_admin_douyin_users__sec_user_id__get",
+        "parameters": [
+          {
+            "name": "sec_user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sec User Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DouyinUser"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "删除抖音用户",
+        "operationId": "delete_douyin_user_admin_douyin_users__sec_user_id__delete",
+        "parameters": [
+          {
+            "name": "sec_user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sec User Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/douyin/users/{sec_user_id}/settings": {
+      "put": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "更新抖音用户设置",
+        "operationId": "update_douyin_user_settings_admin_douyin_users__sec_user_id__settings_put",
+        "parameters": [
+          {
+            "name": "sec_user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sec User Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DouyinUserSettingsUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DouyinUser"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/douyin/users/{sec_user_id}/works": {
+      "get": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "获取抖音用户作品列表",
+        "operationId": "list_douyin_user_works_admin_douyin_users__sec_user_id__works_get",
+        "parameters": [
+          {
+            "name": "sec_user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sec User Id"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 18,
+              "title": "Count"
+            }
+          },
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DouyinWorkPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/douyin/users/{sec_user_id}/works/stored": {
+      "get": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "获取抖音用户作品库",
+        "operationId": "list_douyin_user_works_stored_admin_douyin_users__sec_user_id__works_stored_get",
+        "parameters": [
+          {
+            "name": "sec_user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sec User Id"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 12,
+              "title": "Page Size"
+            }
+          },
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DouyinWorkListPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/douyin/users/{sec_user_id}/latest": {
+      "get": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "获取抖音用户当日作品",
+        "operationId": "list_douyin_user_latest_admin_douyin_users__sec_user_id__latest_get",
+        "parameters": [
+          {
+            "name": "sec_user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sec User Id"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 12,
+              "title": "Page Size"
+            }
+          },
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DouyinDailyWorkPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "获取抖音用户最新作品",
+        "operationId": "fetch_douyin_user_latest_admin_douyin_users__sec_user_id__latest_post",
+        "parameters": [
+          {
+            "name": "sec_user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sec User Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DouyinDailyWorkPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/douyin/users/{sec_user_id}/live": {
+      "get": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "获取抖音用户直播缓存",
+        "operationId": "get_douyin_user_live_cache_admin_douyin_users__sec_user_id__live_get",
+        "parameters": [
+          {
+            "name": "sec_user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sec User Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "获取抖音用户直播状态",
+        "operationId": "fetch_douyin_user_live_admin_douyin_users__sec_user_id__live_post",
+        "parameters": [
+          {
+            "name": "sec_user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sec User Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/douyin/cookies": {
+      "get": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "获取抖音 Cookie 列表",
+        "operationId": "list_douyin_cookies_admin_douyin_cookies_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DouyinCookie"
+                  },
+                  "title": "Response List Douyin Cookies Admin Douyin Cookies Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "新增抖音 Cookie",
+        "operationId": "create_douyin_cookie_admin_douyin_cookies_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DouyinCookieCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DouyinCookie"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/douyin/cookies/clipboard": {
+      "post": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "从剪贴板新增抖音 Cookie",
+        "operationId": "create_douyin_cookie_from_clipboard_admin_douyin_cookies_clipboard_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DouyinCookieClipboardCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DouyinCookie"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/douyin/cookies/browser": {
+      "post": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "从浏览器新增抖音 Cookie",
+        "operationId": "create_douyin_cookie_from_browser_admin_douyin_cookies_browser_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DouyinCookieBrowserCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DouyinCookie"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/douyin/cookies/{cookie_id}": {
+      "delete": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "删除抖音 Cookie",
+        "operationId": "delete_douyin_cookie_admin_douyin_cookies__cookie_id__delete",
+        "parameters": [
+          {
+            "name": "cookie_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cookie Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/douyin/schedule": {
+      "get": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "获取全局计划任务设置",
+        "operationId": "get_douyin_schedule_admin_douyin_schedule_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DouyinScheduleSetting"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "更新全局计划任务设置",
+        "operationId": "update_douyin_schedule_admin_douyin_schedule_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DouyinScheduleSetting"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DouyinScheduleSetting"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/douyin/daily/works": {
+      "get": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "获取当天新增作品列表",
+        "operationId": "list_douyin_daily_works_admin_douyin_daily_works_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "title": "Page Size"
+            }
+          },
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DouyinDailyWorkPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/douyin/daily/live": {
+      "get": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "获取当天直播用户列表",
+        "operationId": "list_douyin_daily_live_admin_douyin_daily_live_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "title": "Page Size"
+            }
+          },
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DouyinUserPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/douyin/daily/feed": {
+      "get": {
+        "tags": [
+          "管理"
+        ],
+        "summary": "获取当天作品与直播播放列表",
+        "operationId": "list_douyin_daily_feed_admin_douyin_daily_feed_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 30,
+              "title": "Page Size"
+            }
+          },
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DouyinClientFeedPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/client/douyin/daily/feed": {
+      "get": {
+        "tags": [
+          "客户端"
+        ],
+        "summary": "获取当天作品与直播播放列表",
+        "operationId": "list_douyin_daily_feed_client_client_douyin_daily_feed_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 30,
+              "title": "Page Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DouyinClientFeedPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/client/douyin/detail": {
+      "get": {
+        "tags": [
+          "客户端"
+        ],
+        "summary": "获取单个作品播放信息",
+        "operationId": "get_client_detail_client_douyin_detail_get",
+        "parameters": [
+          {
+            "name": "aweme_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 6,
+              "title": "Aweme Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/client/douyin/users/{sec_user_id}/live": {
+      "post": {
+        "tags": [
+          "客户端"
+        ],
+        "summary": "获取抖音用户直播状态",
+        "operationId": "fetch_douyin_user_live_client_client_douyin_users__sec_user_id__live_post",
+        "parameters": [
+          {
+            "name": "sec_user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sec User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/douyin/share": {
+      "post": {
+        "tags": [
+          "抖音"
+        ],
+        "summary": "获取分享链接重定向的完整链接",
+        "description": "**参数**:\n\n- **text**: 包含分享链接的字符串；必需参数\n- **proxy**: 代理；可选参数",
+        "operationId": "handle_share_douyin_share_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShortUrl"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UrlResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/douyin/detail": {
+      "post": {
+        "tags": [
+          "抖音"
+        ],
+        "summary": "获取单个作品数据",
+        "description": "**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **detail_id**: 抖音作品 ID；必需参数",
+        "operationId": "handle_detail_douyin_detail_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Detail"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/douyin/account": {
+      "post": {
+        "tags": [
+          "抖音"
+        ],
+        "summary": "获取账号作品数据",
+        "description": "**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **sec_user_id**: 抖音账号 sec_uid；必需参数\n- **tab**: 账号页面类型；可选参数，默认值：`post`\n- **earliest**: 作品最早发布日期；可选参数\n- **latest**: 作品最晚发布日期；可选参数\n- **pages**: 最大请求次数，仅对请求账号喜欢页数据有效；可选参数\n- **cursor**: 可选参数\n- **count**: 可选参数",
+        "operationId": "handle_account_douyin_account_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Account"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/douyin/account/live": {
+      "post": {
+        "tags": [
+          "抖音"
+        ],
+        "summary": "查询账号直播状态与直播间数据",
+        "description": "**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **dump_html**: 是否保存原始 HTML 到本地；可选参数，默认值：True\n- **sec_user_id**: 抖音账号 sec_uid；必需参数",
+        "operationId": "handle_account_live_douyin_account_live_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountLive"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/douyin/mix": {
+      "post": {
+        "tags": [
+          "抖音"
+        ],
+        "summary": "获取合集作品数据",
+        "description": "**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **mix_id**: 抖音合集 ID\n- **detail_id**: 属于合集的抖音作品 ID\n- **cursor**: 可选参数\n- **count**: 可选参数\n\n**`mix_id` 和 `detail_id` 二选一，只需传入其中之一即可**",
+        "operationId": "handle_mix_douyin_mix_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Mix"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/douyin/live": {
+      "post": {
+        "tags": [
+          "抖音"
+        ],
+        "summary": "获取直播数据",
+        "description": "**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **web_rid**: 抖音直播 web_rid",
+        "operationId": "handle_live_douyin_live_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Live"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/douyin/comment": {
+      "post": {
+        "tags": [
+          "抖音"
+        ],
+        "summary": "获取作品评论数据",
+        "description": "**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **detail_id**: 抖音作品 ID；必需参数\n- **pages**: 最大请求次数；可选参数\n- **cursor**: 可选参数\n- **count**: 可选参数\n- **count_reply**: 可选参数\n- **reply**: 可选参数，默认值：False",
+        "operationId": "handle_comment_douyin_comment_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Comment"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/douyin/reply": {
+      "post": {
+        "tags": [
+          "抖音"
+        ],
+        "summary": "获取评论回复数据",
+        "description": "**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **detail_id**: 抖音作品 ID；必需参数\n- **comment_id**: 评论 ID；必需参数\n- **pages**: 最大请求次数；可选参数\n- **cursor**: 可选参数\n- **count**: 可选参数",
+        "operationId": "handle_reply_douyin_reply_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Reply"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/douyin/search/general": {
+      "post": {
+        "tags": [
+          "抖音"
+        ],
+        "summary": "获取综合搜索数据",
+        "description": "**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **keyword**: 关键词；必需参数\n- **offset**: 起始页码；可选参数\n- **count**: 数据数量；可选参数\n- **pages**: 总页数；可选参数\n- **sort_type**: 排序依据；可选参数\n- **publish_time**: 发布时间；可选参数\n- **duration**: 视频时长；可选参数\n- **search_range**: 搜索范围；可选参数\n- **content_type**: 内容形式；可选参数\n\n**部分参数传入规则请查阅文档**: [参数含义](https://github.com/JoeanAmier/TikTokDownloader/wiki/Documentation#%E9%87%87%E9%9B%86%E6%90%9C%E7%B4%A2%E7%BB%93%E6%9E%9C%E6%95%B0%E6%8D%AE%E6%8A%96%E9%9F%B3)",
+        "operationId": "handle_search_general_douyin_search_general_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GeneralSearch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/douyin/search/video": {
+      "post": {
+        "tags": [
+          "抖音"
+        ],
+        "summary": "获取视频搜索数据",
+        "description": "**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **keyword**: 关键词；必需参数\n- **offset**: 起始页码；可选参数\n- **count**: 数据数量；可选参数\n- **pages**: 总页数；可选参数\n- **sort_type**: 排序依据；可选参数\n- **publish_time**: 发布时间；可选参数\n- **duration**: 视频时长；可选参数\n- **search_range**: 搜索范围；可选参数\n\n**部分参数传入规则请查阅文档**: [参数含义](https://github.com/JoeanAmier/TikTokDownloader/wiki/Documentation#%E9%87%87%E9%9B%86%E6%90%9C%E7%B4%A2%E7%BB%93%E6%9E%9C%E6%95%B0%E6%8D%AE%E6%8A%96%E9%9F%B3)",
+        "operationId": "handle_search_video_douyin_search_video_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoSearch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/douyin/search/user": {
+      "post": {
+        "tags": [
+          "抖音"
+        ],
+        "summary": "获取用户搜索数据",
+        "description": "**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **keyword**: 关键词；必需参数\n- **offset**: 起始页码；可选参数\n- **count**: 数据数量；可选参数\n- **pages**: 总页数；可选参数\n- **douyin_user_fans**: 粉丝数量；可选参数\n- **douyin_user_type**: 用户类型；可选参数\n\n**部分参数传入规则请查阅文档**: [参数含义](https://github.com/JoeanAmier/TikTokDownloader/wiki/Documentation#%E9%87%87%E9%9B%86%E6%90%9C%E7%B4%A2%E7%BB%93%E6%9E%9C%E6%95%B0%E6%8D%AE%E6%8A%96%E9%9F%B3)",
+        "operationId": "handle_search_user_douyin_search_user_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserSearch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/douyin/search/live": {
+      "post": {
+        "tags": [
+          "抖音"
+        ],
+        "summary": "获取直播搜索数据",
+        "description": "**参数**:\n\n- **cookie**: 抖音 Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **keyword**: 关键词；必需参数\n- **offset**: 起始页码；可选参数\n- **count**: 数据数量；可选参数\n- **pages**: 总页数；可选参数",
+        "operationId": "handle_search_live_douyin_search_live_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LiveSearch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tiktok/share": {
+      "post": {
+        "tags": [
+          "TikTok"
+        ],
+        "summary": "获取分享链接重定向的完整链接",
+        "description": "**参数**:\n\n- **text**: 包含分享链接的字符串；必需参数\n- **proxy**: 代理；可选参数",
+        "operationId": "handle_share_tiktok_tiktok_share_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShortUrl"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UrlResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tiktok/detail": {
+      "post": {
+        "tags": [
+          "TikTok"
+        ],
+        "summary": "获取单个作品数据",
+        "description": "**参数**:\n\n- **cookie**: TikTok Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **detail_id**: TikTok 作品 ID；必需参数",
+        "operationId": "handle_detail_tiktok_tiktok_detail_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DetailTikTok"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tiktok/account": {
+      "post": {
+        "tags": [
+          "TikTok"
+        ],
+        "summary": "获取账号作品数据",
+        "description": "**参数**:\n\n- **cookie**: TikTok Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **sec_user_id**: TikTok 账号 secUid；必需参数\n- **tab**: 账号页面类型；可选参数，默认值：`post`\n- **earliest**: 作品最早发布日期；可选参数\n- **latest**: 作品最晚发布日期；可选参数\n- **pages**: 最大请求次数，仅对请求账号喜欢页数据有效；可选参数\n- **cursor**: 可选参数\n- **count**: 可选参数",
+        "operationId": "handle_account_tiktok_tiktok_account_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountTiktok"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tiktok/mix": {
+      "post": {
+        "tags": [
+          "TikTok"
+        ],
+        "summary": "获取合辑作品数据",
+        "description": "**参数**:\n\n- **cookie**: TikTok Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **mix_id**: TikTok 合集 ID；必需参数\n- **cursor**: 可选参数\n- **count**: 可选参数",
+        "operationId": "handle_mix_tiktok_tiktok_mix_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MixTikTok"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tiktok/live": {
+      "post": {
+        "tags": [
+          "TikTok"
+        ],
+        "summary": "获取直播数据",
+        "description": "**参数**:\n\n- **cookie**: TikTok Cookie；可选参数\n- **proxy**: 代理；可选参数\n- **source**: 是否返回原始响应数据；可选参数，默认值：False\n- **room_id**: TikTok 直播 room_id；必需参数",
+        "operationId": "handle_live_tiktok_tiktok_live_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Live"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Account": {
+        "properties": {
+          "cookie": {
+            "type": "string",
+            "title": "Cookie",
+            "default": ""
+          },
+          "proxy": {
+            "type": "string",
+            "title": "Proxy",
+            "default": ""
+          },
+          "source": {
+            "type": "boolean",
+            "title": "Source",
+            "default": false
+          },
+          "sec_user_id": {
+            "type": "string",
+            "title": "Sec User Id"
+          },
+          "tab": {
+            "type": "string",
+            "title": "Tab",
+            "default": "post"
+          },
+          "earliest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Earliest"
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest"
+          },
+          "pages": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pages"
+          },
+          "cursor": {
+            "type": "integer",
+            "title": "Cursor",
+            "default": 0
+          },
+          "count": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Count",
+            "default": 18
+          }
+        },
+        "type": "object",
+        "required": [
+          "sec_user_id"
+        ],
+        "title": "Account"
+      },
+      "AccountLive": {
+        "properties": {
+          "cookie": {
+            "type": "string",
+            "title": "Cookie",
+            "default": ""
+          },
+          "proxy": {
+            "type": "string",
+            "title": "Proxy",
+            "default": ""
+          },
+          "source": {
+            "type": "boolean",
+            "title": "Source",
+            "default": false
+          },
+          "sec_user_id": {
+            "type": "string",
+            "title": "Sec User Id"
+          },
+          "dump_html": {
+            "type": "boolean",
+            "title": "Dump Html",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "sec_user_id"
+        ],
+        "title": "AccountLive"
+      },
+      "AccountTiktok": {
+        "properties": {
+          "cookie": {
+            "type": "string",
+            "title": "Cookie",
+            "default": ""
+          },
+          "proxy": {
+            "type": "string",
+            "title": "Proxy",
+            "default": ""
+          },
+          "source": {
+            "type": "boolean",
+            "title": "Source",
+            "default": false
+          },
+          "sec_user_id": {
+            "type": "string",
+            "title": "Sec User Id"
+          },
+          "tab": {
+            "type": "string",
+            "title": "Tab",
+            "default": "post"
+          },
+          "earliest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Earliest"
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest"
+          },
+          "pages": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pages"
+          },
+          "cursor": {
+            "type": "integer",
+            "title": "Cursor",
+            "default": 0
+          },
+          "count": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Count",
+            "default": 18
+          }
+        },
+        "type": "object",
+        "required": [
+          "sec_user_id"
+        ],
+        "title": "AccountTiktok"
+      },
+      "AccountUrl": {
+        "properties": {
+          "mark": {
+            "type": "string",
+            "title": "Mark",
+            "default": ""
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "tab": {
+            "type": "string",
+            "title": "Tab",
+            "default": "post"
+          },
+          "earliest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Earliest",
+            "default": ""
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Latest",
+            "default": ""
+          },
+          "enable": {
+            "type": "boolean",
+            "title": "Enable",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "AccountUrl"
+      },
+      "BrowserInfo": {
+        "properties": {
+          "User-Agent": {
+            "type": "string",
+            "title": "User-Agent",
+            "default": ""
+          },
+          "pc_libra_divert": {
+            "type": "string",
+            "title": "Pc Libra Divert",
+            "default": ""
+          },
+          "browser_language": {
+            "type": "string",
+            "title": "Browser Language",
+            "default": ""
+          },
+          "browser_platform": {
+            "type": "string",
+            "title": "Browser Platform",
+            "default": ""
+          },
+          "browser_name": {
+            "type": "string",
+            "title": "Browser Name",
+            "default": ""
+          },
+          "browser_version": {
+            "type": "string",
+            "title": "Browser Version",
+            "default": ""
+          },
+          "engine_name": {
+            "type": "string",
+            "title": "Engine Name",
+            "default": ""
+          },
+          "engine_version": {
+            "type": "string",
+            "title": "Engine Version",
+            "default": ""
+          },
+          "os_name": {
+            "type": "string",
+            "title": "Os Name",
+            "default": ""
+          },
+          "os_version": {
+            "type": "string",
+            "title": "Os Version",
+            "default": ""
+          },
+          "webid": {
+            "type": "string",
+            "title": "Webid",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "BrowserInfo"
+      },
+      "Comment": {
+        "properties": {
+          "cookie": {
+            "type": "string",
+            "title": "Cookie",
+            "default": ""
+          },
+          "proxy": {
+            "type": "string",
+            "title": "Proxy",
+            "default": ""
+          },
+          "source": {
+            "type": "boolean",
+            "title": "Source",
+            "default": false
+          },
+          "detail_id": {
+            "type": "string",
+            "title": "Detail Id"
+          },
+          "pages": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Pages",
+            "default": 1
+          },
+          "cursor": {
+            "type": "integer",
+            "title": "Cursor",
+            "default": 0
+          },
+          "count": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Count",
+            "default": 20
+          },
+          "count_reply": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Count Reply",
+            "default": 3
+          },
+          "reply": {
+            "type": "boolean",
+            "title": "Reply",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail_id"
+        ],
+        "title": "Comment"
+      },
+      "DataResponse": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "params": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Params"
+          },
+          "time": {
+            "type": "string",
+            "title": "Time",
+            "description": "格式化后的时间字符串",
+            "readOnly": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "message",
+          "params",
+          "time"
+        ],
+        "title": "DataResponse"
+      },
+      "Detail": {
+        "properties": {
+          "cookie": {
+            "type": "string",
+            "title": "Cookie",
+            "default": ""
+          },
+          "proxy": {
+            "type": "string",
+            "title": "Proxy",
+            "default": ""
+          },
+          "source": {
+            "type": "boolean",
+            "title": "Source",
+            "default": false
+          },
+          "detail_id": {
+            "type": "string",
+            "title": "Detail Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail_id"
+        ],
+        "title": "Detail"
+      },
+      "DetailTikTok": {
+        "properties": {
+          "cookie": {
+            "type": "string",
+            "title": "Cookie",
+            "default": ""
+          },
+          "proxy": {
+            "type": "string",
+            "title": "Proxy",
+            "default": ""
+          },
+          "source": {
+            "type": "boolean",
+            "title": "Source",
+            "default": false
+          },
+          "detail_id": {
+            "type": "string",
+            "title": "Detail Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail_id"
+        ],
+        "title": "DetailTikTok"
+      },
+      "DouyinClientFeedItem": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "sec_user_id": {
+            "type": "string",
+            "title": "Sec User Id",
+            "default": ""
+          },
+          "uid": {
+            "type": "string",
+            "title": "Uid",
+            "default": ""
+          },
+          "nickname": {
+            "type": "string",
+            "title": "Nickname",
+            "default": ""
+          },
+          "avatar": {
+            "type": "string",
+            "title": "Avatar",
+            "default": ""
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "default": ""
+          },
+          "cover": {
+            "type": "string",
+            "title": "Cover",
+            "default": ""
+          },
+          "sort_time": {
+            "type": "string",
+            "title": "Sort Time",
+            "default": ""
+          },
+          "aweme_id": {
+            "type": "string",
+            "title": "Aweme Id",
+            "default": ""
+          },
+          "play_count": {
+            "type": "integer",
+            "title": "Play Count",
+            "default": 0
+          },
+          "video_url": {
+            "type": "string",
+            "title": "Video Url",
+            "default": ""
+          },
+          "room_id": {
+            "type": "string",
+            "title": "Room Id",
+            "default": ""
+          },
+          "web_rid": {
+            "type": "string",
+            "title": "Web Rid",
+            "default": ""
+          },
+          "live_url": {
+            "type": "string",
+            "title": "Live Url",
+            "default": ""
+          },
+          "last_live_at": {
+            "type": "string",
+            "title": "Last Live At",
+            "default": ""
+          },
+          "flv_pull_url": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Flv Pull Url"
+          },
+          "hls_pull_url_map": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Hls Pull Url Map"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "title": "DouyinClientFeedItem"
+      },
+      "DouyinClientFeedPage": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "video_total": {
+            "type": "integer",
+            "title": "Video Total"
+          },
+          "live_total": {
+            "type": "integer",
+            "title": "Live Total"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DouyinClientFeedItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "video_total",
+          "live_total",
+          "items"
+        ],
+        "title": "DouyinClientFeedPage"
+      },
+      "DouyinCookie": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "account": {
+            "type": "string",
+            "title": "Account",
+            "default": ""
+          },
+          "cookie_masked": {
+            "type": "string",
+            "title": "Cookie Masked",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "active"
+          },
+          "fail_count": {
+            "type": "integer",
+            "title": "Fail Count",
+            "default": 0
+          },
+          "last_used_at": {
+            "type": "string",
+            "title": "Last Used At",
+            "default": ""
+          },
+          "last_failed_at": {
+            "type": "string",
+            "title": "Last Failed At",
+            "default": ""
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At",
+            "default": ""
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "DouyinCookie"
+      },
+      "DouyinCookieBrowserCreate": {
+        "properties": {
+          "account": {
+            "type": "string",
+            "title": "Account",
+            "default": ""
+          },
+          "browser": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Browser"
+          }
+        },
+        "type": "object",
+        "required": [
+          "browser"
+        ],
+        "title": "DouyinCookieBrowserCreate"
+      },
+      "DouyinCookieClipboardCreate": {
+        "properties": {
+          "account": {
+            "type": "string",
+            "title": "Account",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "DouyinCookieClipboardCreate"
+      },
+      "DouyinCookieCreate": {
+        "properties": {
+          "account": {
+            "type": "string",
+            "title": "Account",
+            "default": ""
+          },
+          "cookie": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Cookie"
+          }
+        },
+        "type": "object",
+        "required": [
+          "cookie"
+        ],
+        "title": "DouyinCookieCreate"
+      },
+      "DouyinDailyWorkPage": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DouyinWork"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "items"
+        ],
+        "title": "DouyinDailyWorkPage"
+      },
+      "DouyinScheduleSetting": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "times": {
+            "type": "string",
+            "title": "Times",
+            "default": ""
+          },
+          "expression": {
+            "type": "string",
+            "title": "Expression",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "DouyinScheduleSetting"
+      },
+      "DouyinUser": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "sec_user_id": {
+            "type": "string",
+            "title": "Sec User Id"
+          },
+          "uid": {
+            "type": "string",
+            "title": "Uid",
+            "default": ""
+          },
+          "nickname": {
+            "type": "string",
+            "title": "Nickname",
+            "default": ""
+          },
+          "avatar": {
+            "type": "string",
+            "title": "Avatar",
+            "default": ""
+          },
+          "cover": {
+            "type": "string",
+            "title": "Cover",
+            "default": ""
+          },
+          "has_works": {
+            "type": "boolean",
+            "title": "Has Works",
+            "default": false
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "unknown"
+          },
+          "is_live": {
+            "type": "boolean",
+            "title": "Is Live",
+            "default": false
+          },
+          "has_new_today": {
+            "type": "boolean",
+            "title": "Has New Today",
+            "default": false
+          },
+          "auto_update": {
+            "type": "boolean",
+            "title": "Auto Update",
+            "default": false
+          },
+          "update_window_start": {
+            "type": "string",
+            "title": "Update Window Start",
+            "default": ""
+          },
+          "update_window_end": {
+            "type": "string",
+            "title": "Update Window End",
+            "default": ""
+          },
+          "last_live_at": {
+            "type": "string",
+            "title": "Last Live At",
+            "default": ""
+          },
+          "last_new_at": {
+            "type": "string",
+            "title": "Last New At",
+            "default": ""
+          },
+          "last_fetch_at": {
+            "type": "string",
+            "title": "Last Fetch At",
+            "default": ""
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At",
+            "default": ""
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At",
+            "default": ""
+          },
+          "next_auto_update_at": {
+            "type": "string",
+            "title": "Next Auto Update At",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "sec_user_id"
+        ],
+        "title": "DouyinUser"
+      },
+      "DouyinUserCreate": {
+        "properties": {
+          "sec_user_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Sec User Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sec_user_id"
+        ],
+        "title": "DouyinUserCreate"
+      },
+      "DouyinUserPage": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DouyinUser"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "items"
+        ],
+        "title": "DouyinUserPage"
+      },
+      "DouyinUserSettingsUpdate": {
+        "properties": {
+          "auto_update": {
+            "type": "boolean",
+            "title": "Auto Update",
+            "default": false
+          },
+          "update_window_start": {
+            "type": "string",
+            "title": "Update Window Start",
+            "default": ""
+          },
+          "update_window_end": {
+            "type": "string",
+            "title": "Update Window End",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "DouyinUserSettingsUpdate"
+      },
+      "DouyinWork": {
+        "properties": {
+          "sec_user_id": {
+            "type": "string",
+            "title": "Sec User Id",
+            "default": ""
+          },
+          "aweme_id": {
+            "type": "string",
+            "title": "Aweme Id",
+            "default": ""
+          },
+          "desc": {
+            "type": "string",
+            "title": "Desc",
+            "default": ""
+          },
+          "create_ts": {
+            "type": "integer",
+            "title": "Create Ts",
+            "default": 0
+          },
+          "create_time": {
+            "type": "string",
+            "title": "Create Time",
+            "default": ""
+          },
+          "create_date": {
+            "type": "string",
+            "title": "Create Date",
+            "default": ""
+          },
+          "nickname": {
+            "type": "string",
+            "title": "Nickname",
+            "default": ""
+          },
+          "cover": {
+            "type": "string",
+            "title": "Cover",
+            "default": ""
+          },
+          "play_count": {
+            "type": "integer",
+            "title": "Play Count",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "DouyinWork"
+      },
+      "DouyinWorkListPage": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DouyinWork"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "items"
+        ],
+        "title": "DouyinWorkListPage"
+      },
+      "DouyinWorkPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DouyinWork"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "type": "integer",
+            "title": "Next Cursor",
+            "default": 0
+          },
+          "has_more": {
+            "type": "boolean",
+            "title": "Has More",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "DouyinWorkPage"
+      },
+      "GeneralSearch": {
+        "properties": {
+          "cookie": {
+            "type": "string",
+            "title": "Cookie",
+            "default": ""
+          },
+          "proxy": {
+            "type": "string",
+            "title": "Proxy",
+            "default": ""
+          },
+          "source": {
+            "type": "boolean",
+            "title": "Source",
+            "default": false
+          },
+          "keyword": {
+            "type": "string",
+            "title": "Keyword"
+          },
+          "pages": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Pages",
+            "default": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Offset",
+            "default": 0
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 5.0,
+            "title": "Count",
+            "default": 10
+          },
+          "channel": {
+            "type": "integer",
+            "const": 0,
+            "title": "Channel",
+            "default": 0
+          },
+          "sort_type": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              2
+            ],
+            "title": "Sort Type",
+            "default": 0
+          },
+          "publish_time": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              7,
+              180
+            ],
+            "title": "Publish Time",
+            "default": 0
+          },
+          "duration": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "title": "Duration",
+            "default": 0
+          },
+          "search_range": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "title": "Search Range",
+            "default": 0
+          },
+          "content_type": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              2
+            ],
+            "title": "Content Type",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "keyword"
+        ],
+        "title": "GeneralSearch"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "Live": {
+        "properties": {
+          "cookie": {
+            "type": "string",
+            "title": "Cookie",
+            "default": ""
+          },
+          "proxy": {
+            "type": "string",
+            "title": "Proxy",
+            "default": ""
+          },
+          "source": {
+            "type": "boolean",
+            "title": "Source",
+            "default": false
+          },
+          "web_rid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Web Rid"
+          }
+        },
+        "type": "object",
+        "title": "Live"
+      },
+      "LiveSearch": {
+        "properties": {
+          "cookie": {
+            "type": "string",
+            "title": "Cookie",
+            "default": ""
+          },
+          "proxy": {
+            "type": "string",
+            "title": "Proxy",
+            "default": ""
+          },
+          "source": {
+            "type": "boolean",
+            "title": "Source",
+            "default": false
+          },
+          "keyword": {
+            "type": "string",
+            "title": "Keyword"
+          },
+          "pages": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Pages",
+            "default": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Offset",
+            "default": 0
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 5.0,
+            "title": "Count",
+            "default": 10
+          },
+          "channel": {
+            "type": "integer",
+            "const": 3,
+            "title": "Channel",
+            "default": 3
+          }
+        },
+        "type": "object",
+        "required": [
+          "keyword"
+        ],
+        "title": "LiveSearch"
+      },
+      "Mix": {
+        "properties": {
+          "cookie": {
+            "type": "string",
+            "title": "Cookie",
+            "default": ""
+          },
+          "proxy": {
+            "type": "string",
+            "title": "Proxy",
+            "default": ""
+          },
+          "source": {
+            "type": "boolean",
+            "title": "Source",
+            "default": false
+          },
+          "mix_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mix Id"
+          },
+          "detail_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail Id"
+          },
+          "cursor": {
+            "type": "integer",
+            "title": "Cursor",
+            "default": 0
+          },
+          "count": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Count",
+            "default": 12
+          }
+        },
+        "type": "object",
+        "title": "Mix"
+      },
+      "MixTikTok": {
+        "properties": {
+          "cookie": {
+            "type": "string",
+            "title": "Cookie",
+            "default": ""
+          },
+          "proxy": {
+            "type": "string",
+            "title": "Proxy",
+            "default": ""
+          },
+          "source": {
+            "type": "boolean",
+            "title": "Source",
+            "default": false
+          },
+          "mix_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mix Id"
+          },
+          "cursor": {
+            "type": "integer",
+            "title": "Cursor",
+            "default": 0
+          },
+          "count": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Count",
+            "default": 30
+          }
+        },
+        "type": "object",
+        "title": "MixTikTok"
+      },
+      "MixUrl": {
+        "properties": {
+          "mark": {
+            "type": "string",
+            "title": "Mark",
+            "default": ""
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "enable": {
+            "type": "boolean",
+            "title": "Enable",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "MixUrl"
+      },
+      "OwnerUrl": {
+        "properties": {
+          "mark": {
+            "type": "string",
+            "title": "Mark",
+            "default": ""
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "uid": {
+            "type": "string",
+            "title": "Uid",
+            "default": ""
+          },
+          "sec_uid": {
+            "type": "string",
+            "title": "Sec Uid",
+            "default": ""
+          },
+          "nickname": {
+            "type": "string",
+            "title": "Nickname",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "OwnerUrl"
+      },
+      "Reply": {
+        "properties": {
+          "cookie": {
+            "type": "string",
+            "title": "Cookie",
+            "default": ""
+          },
+          "proxy": {
+            "type": "string",
+            "title": "Proxy",
+            "default": ""
+          },
+          "source": {
+            "type": "boolean",
+            "title": "Source",
+            "default": false
+          },
+          "detail_id": {
+            "type": "string",
+            "title": "Detail Id"
+          },
+          "comment_id": {
+            "type": "string",
+            "title": "Comment Id"
+          },
+          "pages": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Pages",
+            "default": 1
+          },
+          "cursor": {
+            "type": "integer",
+            "title": "Cursor",
+            "default": 0
+          },
+          "count": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Count",
+            "default": 3
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail_id",
+          "comment_id"
+        ],
+        "title": "Reply"
+      },
+      "Settings": {
+        "properties": {
+          "accounts_urls": {
+            "items": {
+              "$ref": "#/components/schemas/AccountUrl"
+            },
+            "type": "array",
+            "title": "Accounts Urls",
+            "default": []
+          },
+          "accounts_urls_tiktok": {
+            "items": {
+              "$ref": "#/components/schemas/AccountUrl"
+            },
+            "type": "array",
+            "title": "Accounts Urls Tiktok",
+            "default": []
+          },
+          "mix_urls": {
+            "items": {
+              "$ref": "#/components/schemas/MixUrl"
+            },
+            "type": "array",
+            "title": "Mix Urls",
+            "default": []
+          },
+          "mix_urls_tiktok": {
+            "items": {
+              "$ref": "#/components/schemas/MixUrl"
+            },
+            "type": "array",
+            "title": "Mix Urls Tiktok",
+            "default": []
+          },
+          "owner_url": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnerUrl"
+              },
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              }
+            ],
+            "title": "Owner Url",
+            "default": {}
+          },
+          "owner_url_tiktok": {
+            "type": "null",
+            "title": "Owner Url Tiktok"
+          },
+          "root": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root"
+          },
+          "folder_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder Name"
+          },
+          "name_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name Format"
+          },
+          "desc_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Desc Length"
+          },
+          "name_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name Length"
+          },
+          "date_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date Format"
+          },
+          "split": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Split"
+          },
+          "folder_mode": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder Mode"
+          },
+          "music": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Music"
+          },
+          "truncate": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Truncate"
+          },
+          "storage_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Format"
+          },
+          "cookie": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            ],
+            "title": "Cookie",
+            "default": ""
+          },
+          "cookie_tiktok": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              }
+            ],
+            "title": "Cookie Tiktok",
+            "default": ""
+          },
+          "dynamic_cover": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dynamic Cover"
+          },
+          "static_cover": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Static Cover"
+          },
+          "proxy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proxy"
+          },
+          "proxy_tiktok": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proxy Tiktok"
+          },
+          "twc_tiktok": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Twc Tiktok"
+          },
+          "download": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Download"
+          },
+          "max_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Size"
+          },
+          "chunk": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk"
+          },
+          "timeout": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout"
+          },
+          "max_retry": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Retry"
+          },
+          "max_pages": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Pages"
+          },
+          "run_command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Command"
+          },
+          "ffmpeg": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ffmpeg"
+          },
+          "live_qualities": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Qualities"
+          },
+          "douyin_platform": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Douyin Platform"
+          },
+          "tiktok_platform": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tiktok Platform"
+          },
+          "browser_info": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BrowserInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "browser_info_tiktok": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TikTokBrowserInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "Settings"
+      },
+      "ShortUrl": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "proxy": {
+            "type": "string",
+            "title": "Proxy",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "ShortUrl"
+      },
+      "TikTokBrowserInfo": {
+        "properties": {
+          "User-Agent": {
+            "type": "string",
+            "title": "User-Agent",
+            "default": ""
+          },
+          "app_language": {
+            "type": "string",
+            "title": "App Language",
+            "default": ""
+          },
+          "browser_language": {
+            "type": "string",
+            "title": "Browser Language",
+            "default": ""
+          },
+          "browser_name": {
+            "type": "string",
+            "title": "Browser Name",
+            "default": ""
+          },
+          "browser_platform": {
+            "type": "string",
+            "title": "Browser Platform",
+            "default": ""
+          },
+          "browser_version": {
+            "type": "string",
+            "title": "Browser Version",
+            "default": ""
+          },
+          "language": {
+            "type": "string",
+            "title": "Language",
+            "default": ""
+          },
+          "os": {
+            "type": "string",
+            "title": "Os",
+            "default": ""
+          },
+          "priority_region": {
+            "type": "string",
+            "title": "Priority Region",
+            "default": ""
+          },
+          "region": {
+            "type": "string",
+            "title": "Region",
+            "default": ""
+          },
+          "tz_name": {
+            "type": "string",
+            "title": "Tz Name",
+            "default": ""
+          },
+          "webcast_language": {
+            "type": "string",
+            "title": "Webcast Language",
+            "default": ""
+          },
+          "device_id": {
+            "type": "string",
+            "title": "Device Id",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "TikTokBrowserInfo"
+      },
+      "UrlResponse": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "params": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Params"
+          },
+          "time": {
+            "type": "string",
+            "title": "Time",
+            "description": "格式化后的时间字符串",
+            "readOnly": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "message",
+          "params",
+          "time"
+        ],
+        "title": "UrlResponse"
+      },
+      "UserSearch": {
+        "properties": {
+          "cookie": {
+            "type": "string",
+            "title": "Cookie",
+            "default": ""
+          },
+          "proxy": {
+            "type": "string",
+            "title": "Proxy",
+            "default": ""
+          },
+          "source": {
+            "type": "boolean",
+            "title": "Source",
+            "default": false
+          },
+          "keyword": {
+            "type": "string",
+            "title": "Keyword"
+          },
+          "pages": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Pages",
+            "default": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Offset",
+            "default": 0
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 5.0,
+            "title": "Count",
+            "default": 10
+          },
+          "channel": {
+            "type": "integer",
+            "const": 2,
+            "title": "Channel",
+            "default": 2
+          },
+          "douyin_user_fans": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "title": "Douyin User Fans",
+            "default": 0
+          },
+          "douyin_user_type": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "title": "Douyin User Type",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "keyword"
+        ],
+        "title": "UserSearch"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "VideoSearch": {
+        "properties": {
+          "cookie": {
+            "type": "string",
+            "title": "Cookie",
+            "default": ""
+          },
+          "proxy": {
+            "type": "string",
+            "title": "Proxy",
+            "default": ""
+          },
+          "source": {
+            "type": "boolean",
+            "title": "Source",
+            "default": false
+          },
+          "keyword": {
+            "type": "string",
+            "title": "Keyword"
+          },
+          "pages": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Pages",
+            "default": 1
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Offset",
+            "default": 0
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 5.0,
+            "title": "Count",
+            "default": 10
+          },
+          "channel": {
+            "type": "integer",
+            "const": 1,
+            "title": "Channel",
+            "default": 1
+          },
+          "sort_type": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              2
+            ],
+            "title": "Sort Type",
+            "default": 0
+          },
+          "publish_time": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              7,
+              180
+            ],
+            "title": "Publish Time",
+            "default": 0
+          },
+          "duration": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "title": "Duration",
+            "default": 0
+          },
+          "search_range": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "title": "Search Range",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "keyword"
+        ],
+        "title": "VideoSearch"
+      }
+    }
+  }
+}

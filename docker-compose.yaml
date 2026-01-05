@@ -1,0 +1,43 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "main.py", "--web-api", "7"]
+    working_dir: /app
+    env_file:
+      - ./.env.backend
+    volumes:
+      - .:/app
+      - ./Volume:/app/Volume
+    ports:
+      - "5555:5555"
+    restart: unless-stopped
+
+  frontend-build:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /app
+    volumes:
+      - .:/app
+      - admin-ui-node-modules:/app/admin-ui/node_modules
+      - client-ui-node-modules:/app/client-ui/node_modules
+    command: /bin/bash -lc "cd admin-ui && npm ci && npm run build && cd ../client-ui && npm ci && npm run build"
+    profiles:
+      - build
+
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - backend
+    ports:
+      - "8778:80"
+    volumes:
+      - ./static:/app/static:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    restart: unless-stopped
+
+volumes:
+  admin-ui-node-modules:
+  client-ui-node-modules:
