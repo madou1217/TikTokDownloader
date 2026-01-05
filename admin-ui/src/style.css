@@ -319,6 +319,43 @@ tr:last-child td {
   font-size: 12px;
 }
 
+.name-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.name-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: rgba(15, 23, 42, 0.08);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.name-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.name-avatar-fallback {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.name-text {
+  line-height: 22px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .pill {
   display: inline-flex;
   padding: 4px 10px;

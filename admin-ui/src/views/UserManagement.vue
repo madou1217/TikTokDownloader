@@ -51,7 +51,20 @@
               </div>
             </td>
             <td class="mono">{{ item.uid || "-" }}</td>
-            <td>{{ item.nickname || "-" }}</td>
+            <td>
+              <div class="name-cell">
+                <span class="name-avatar">
+                  <img
+                    v-if="item.avatar"
+                    :src="mediaUrl(item.avatar)"
+                    referrerpolicy="no-referrer"
+                    alt="头像"
+                  />
+                  <span v-else class="name-avatar-fallback">无</span>
+                </span>
+                <span class="name-text">{{ item.nickname || "-" }}</span>
+              </div>
+            </td>
             <td>
               <span :class="['pill', item.status]">
                 {{ formatStatus(item.status) }}
@@ -186,6 +199,16 @@ const copyUserId = async (value) => {
   } catch (error) {
     setAlert("error", "复制失败，请手动复制");
   }
+};
+
+const mediaUrl = (url) => {
+  if (!url) {
+    return "";
+  }
+  if (url.startsWith("/")) {
+    return url;
+  }
+  return `/admin/douyin/media?url=${encodeURIComponent(url)}`;
 };
 
 const createUser = async (secUserId) => {
