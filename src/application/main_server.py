@@ -9,6 +9,7 @@ from pathlib import Path
 from shutil import which
 from textwrap import dedent
 from typing import TYPE_CHECKING
+import time as time_module
 from urllib.parse import quote, urljoin, urlparse, urlencode
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
@@ -92,6 +93,11 @@ class APIServer(TikTok):
     MEDIA_PROBE_CONCURRENCY = 2
     USER_ID_PATTERN = re.compile(r"^MS4wL[0-9A-Za-z_-]+$")
     USER_ID_SCAN_PATTERN = re.compile(r"MS4wL[0-9A-Za-z_-]+")
+    STREAM_CACHE_MAX_ITEMS = 240
+    STREAM_CACHE_MAX_BYTES = 2 * 1024 * 1024
+    STREAM_CACHE_TTL_M3U8 = 5
+    STREAM_CACHE_TTL_SEGMENT = 12
+    STREAM_LIVE_PREFIX_TTL = 90
 
     def __init__(
         self,
@@ -114,6 +120,8 @@ class APIServer(TikTok):
         self._refresh_pending = set()
         self._orphan_cleanup_at = None
         self._feed_subscribers = set()
+        self._stream_cache = {}
+        self._live_stream_prefixes = {}
 
     @staticmethod
     def _hash_cookie(cookie: str) -> str:
@@ -870,11 +878,141 @@ class APIServer(TikTok):
         return url.lower().split("?")[0].endswith(".m3u8")
 
     @staticmethod
-    def _proxy_stream_url(url: str) -> str:
-        return f"/client/douyin/stream?url={quote(url, safe='')}"
+    def _proxy_stream_url(url: str, live: bool = False) -> str:
+        path = "/client/douyin/stream-live" if live else "/client/douyin/stream"
+        return f"{path}?url={quote(url, safe='')}"
+
+    @staticmethod
+    def _parse_range_length(range_header: str | None) -> int:
+        if not range_header:
+            return 0
+        match = re.match(r"bytes=(\d+)-(\d+)?", range_header.strip())
+        if not match:
+            return 0
+        start = int(match.group(1) or 0)
+        end = match.group(2)
+        if end is None:
+            return 0
+        try:
+            end_value = int(end)
+        except ValueError:
+            return 0
+        if end_value < start:
+            return 0
+        return end_value - start + 1
+
+    @staticmethod
+    def _build_stream_cache_key(url: str, range_header: str | None) -> str:
+        return f"{url}|{range_header or ''}"
+
+    @staticmethod
+    def _normalize_stream_prefix(url: str) -> str:
+        parsed = urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            return ""
+        base_path = parsed.path.rsplit("/", 1)[0]
+        return f"{parsed.scheme}://{parsed.netloc}{base_path}/"
+
+    def _mark_live_prefix(self, url: str) -> None:
+        prefix = self._normalize_stream_prefix(url)
+        if not prefix:
+            return
+        self._live_stream_prefixes[prefix] = time_module.monotonic() + self.STREAM_LIVE_PREFIX_TTL
+
+    def _is_live_prefix(self, url: str) -> bool:
+        if not self._live_stream_prefixes:
+            return False
+        now = time_module.monotonic()
+        expired = [key for key, value in self._live_stream_prefixes.items() if value <= now]
+        for key in expired:
+            self._live_stream_prefixes.pop(key, None)
+        for prefix in self._live_stream_prefixes.keys():
+            if url.startswith(prefix):
+                return True
+        return False
+
+    @staticmethod
+    def _is_live_playlist(text: str) -> bool:
+        if not text:
+            return True
+        upper = text.upper()
+        if "#EXT-X-ENDLIST" in upper:
+            return False
+        if "#EXT-X-PLAYLIST-TYPE:VOD" in upper:
+            return False
+        return True
+
+    def _get_stream_cache(self, key: str) -> dict | None:
+        item = self._stream_cache.get(key)
+        if not item:
+            return None
+        if item.get("expires_at", 0) <= time_module.monotonic():
+            self._stream_cache.pop(key, None)
+            return None
+        return item
+
+    def _set_stream_cache(
+        self,
+        key: str,
+        body: bytes,
+        content_type: str,
+        headers: dict,
+        status_code: int,
+        ttl_seconds: int,
+    ) -> None:
+        if not body or len(body) > self.STREAM_CACHE_MAX_BYTES:
+            return
+        now = time_module.monotonic()
+        self._stream_cache[key] = {
+            "expires_at": now + ttl_seconds,
+            "stored_at": now,
+            "body": body,
+            "content_type": content_type,
+            "headers": headers,
+            "status_code": status_code,
+        }
+        self._prune_stream_cache()
+
+    def _prune_stream_cache(self) -> None:
+        now = time_module.monotonic()
+        expired = [key for key, item in self._stream_cache.items() if item["expires_at"] <= now]
+        for key in expired:
+            self._stream_cache.pop(key, None)
+        if len(self._stream_cache) <= self.STREAM_CACHE_MAX_ITEMS:
+            return
+        items = sorted(
+            self._stream_cache.items(),
+            key=lambda pair: pair[1].get("stored_at", 0),
+        )
+        excess = len(items) - self.STREAM_CACHE_MAX_ITEMS
+        for index in range(excess):
+            self._stream_cache.pop(items[index][0], None)
+
+    def _should_cache_stream(
+        self,
+        url: str,
+        content_type: str,
+        range_header: str | None,
+        content_length: str | None,
+    ) -> bool:
+        if self._is_live_prefix(url):
+            return False
+        if self._is_m3u8_resource(url, content_type):
+            return False
+        if range_header:
+            requested = self._parse_range_length(range_header)
+            return 0 < requested <= self.STREAM_CACHE_MAX_BYTES
+        if content_length:
+            try:
+                length = int(content_length)
+            except (TypeError, ValueError):
+                length = 0
+            if 0 < length <= self.STREAM_CACHE_MAX_BYTES:
+                return True
+        return False
 
     @classmethod
-    def _rewrite_m3u8(cls, content: str, base_url: str) -> str:
+    def _rewrite_m3u8(cls, content: str, base_url: str, live: bool = False) -> str:
         if not content:
             return ""
         lines = []
@@ -887,17 +1025,17 @@ class APIServer(TikTok):
                 if "URI=" in stripped:
                     line = re.sub(
                         r'URI="([^"]+)"',
-                        lambda match: f'URI="{cls._proxy_stream_url(urljoin(base_url, match.group(1)))}"',
+                        lambda match: f'URI="{cls._proxy_stream_url(urljoin(base_url, match.group(1)), live)}"',
                         line,
                     )
                     line = re.sub(
                         r"URI='([^']+)'",
-                        lambda match: f"URI='{cls._proxy_stream_url(urljoin(base_url, match.group(1)))}'",
+                        lambda match: f"URI='{cls._proxy_stream_url(urljoin(base_url, match.group(1)), live)}'",
                         line,
                     )
                 lines.append(line)
                 continue
-            lines.append(cls._proxy_stream_url(urljoin(base_url, stripped)))
+            lines.append(cls._proxy_stream_url(urljoin(base_url, stripped), live))
         return "\n".join(lines)
 
     def _build_stream_headers(self, url: str, range_header: str | None) -> dict:
@@ -1415,6 +1553,19 @@ class APIServer(TikTok):
         except asyncio.QueueFull:
             self.logger.warning(_("自动拉取队列已满，忽略请求"))
 
+    async def _refresh_user_live_background(self, sec_user_id: str) -> None:
+        if not sec_user_id:
+            return
+        try:
+            await self._refresh_user_live(sec_user_id)
+        except Exception:
+            self.logger.error(_("拉取直播状态失败"), exc_info=True)
+
+    def _trigger_refresh_live(self, sec_user_id: str) -> None:
+        if not sec_user_id:
+            return
+        asyncio.create_task(self._refresh_user_live_background(sec_user_id))
+
     async def _refresh_latest_worker(self, worker_id: int) -> None:
         while True:
             sec_user_id = await self._refresh_queue.get()
@@ -1634,6 +1785,15 @@ class APIServer(TikTok):
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                 raise HTTPException(status_code=400, detail=_("无效资源地址"))
             range_header = request.headers.get("range") if request else None
+            cache_key = self._build_stream_cache_key(url, range_header)
+            cached = self._get_stream_cache(cache_key)
+            if cached:
+                return Response(
+                    content=cached["body"],
+                    status_code=cached.get("status_code", 200),
+                    headers=cached.get("headers") or {},
+                    media_type=cached.get("content_type") or "application/octet-stream",
+                )
             headers = self._build_stream_headers(url, range_header)
             stream = self.parameter.client.stream("GET", url, headers=headers)
             try:
@@ -1644,18 +1804,68 @@ class APIServer(TikTok):
                 await stream.__aexit__(None, None, None)
                 raise HTTPException(status_code=502, detail=_("资源获取失败"))
             content_type = resp.headers.get("Content-Type") or "application/octet-stream"
+            is_live_prefix = self._is_live_prefix(url)
             if self._is_m3u8_resource(url, content_type):
                 body = await resp.aread()
                 await stream.__aexit__(None, None, None)
                 text = body.decode("utf-8", errors="ignore")
+                is_live = self._is_live_playlist(text)
+                if is_live:
+                    self._mark_live_prefix(url)
+                rewritten = self._rewrite_m3u8(text, url, live=is_live).encode("utf-8")
+                cache_headers = {"Content-Length": str(len(rewritten))}
+                if is_live:
+                    cache_headers["Cache-Control"] = "no-store"
+                    cache_headers["X-Accel-Buffering"] = "no"
+                else:
+                    cache_headers["Cache-Control"] = "public, max-age=300"
+                if not is_live:
+                    self._set_stream_cache(
+                        cache_key,
+                        rewritten,
+                        "application/vnd.apple.mpegurl",
+                        cache_headers,
+                        resp.status_code,
+                        self.STREAM_CACHE_TTL_M3U8,
+                    )
                 return Response(
-                    content=self._rewrite_m3u8(text, url),
+                    content=rewritten,
+                    headers=cache_headers,
                     media_type="application/vnd.apple.mpegurl",
                 )
             response_headers = {}
             for key in ("Content-Length", "Content-Range", "Accept-Ranges"):
                 if resp.headers.get(key):
                     response_headers[key] = resp.headers.get(key)
+            if is_live_prefix:
+                response_headers["Cache-Control"] = "no-store"
+                response_headers["X-Accel-Buffering"] = "no"
+            else:
+                response_headers["Cache-Control"] = "public, max-age=300"
+            cacheable = self._should_cache_stream(
+                url,
+                content_type,
+                range_header,
+                resp.headers.get("Content-Length"),
+            )
+            if cacheable:
+                body = await resp.aread()
+                await stream.__aexit__(None, None, None)
+                response_headers["Content-Length"] = str(len(body))
+                self._set_stream_cache(
+                    cache_key,
+                    body,
+                    content_type,
+                    response_headers,
+                    resp.status_code,
+                    self.STREAM_CACHE_TTL_SEGMENT,
+                )
+                return Response(
+                    content=body,
+                    status_code=resp.status_code,
+                    headers=response_headers,
+                    media_type=content_type,
+                )
 
             async def iterator():
                 try:
@@ -1815,6 +2025,7 @@ class APIServer(TikTok):
                         status="active",
                     )
                     self._trigger_refresh_latest(sec_user_id)
+                    self._trigger_refresh_live(sec_user_id)
                     return DouyinUser(**self._normalize_user_row(record))
                 record = await self.database.upsert_douyin_user(
                     sec_user_id=sec_user_id,
@@ -1826,6 +2037,7 @@ class APIServer(TikTok):
                     status="no_works",
                 )
                 self._trigger_refresh_latest(sec_user_id)
+                self._trigger_refresh_live(sec_user_id)
                 return DouyinUser(**self._normalize_user_row(record))
             record = await self.database.upsert_douyin_user(
                 sec_user_id=sec_user_id,
@@ -1837,6 +2049,7 @@ class APIServer(TikTok):
                 status="no_works",
             )
             self._trigger_refresh_latest(sec_user_id)
+            self._trigger_refresh_live(sec_user_id)
             return DouyinUser(**self._normalize_user_row(record))
 
         @self.server.put(
