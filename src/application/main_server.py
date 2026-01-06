@@ -739,10 +739,10 @@ class APIServer(TikTok):
         aweme_id = row.get("aweme_id", "")
         item = DouyinClientFeedItem(
             type="video",
-            sec_user_id=row.get("sec_user_id", ""),
-            uid=row.get("uid", ""),
-            nickname=row.get("nickname", ""),
-            avatar=row.get("avatar", ""),
+            sec_user_id=row.get("sec_user_id") or "",
+            uid=row.get("uid") or "",
+            nickname=row.get("nickname") or "",
+            avatar=row.get("avatar") or "",
             title=row.get("desc", "") or aweme_id,
             cover=row.get("cover", ""),
             sort_time=self._format_timestamp(create_ts),
@@ -768,9 +768,9 @@ class APIServer(TikTok):
         item = DouyinClientFeedItem(
             type="live",
             sec_user_id=sec_user_id,
-            uid=row.get("uid", ""),
-            nickname=row.get("nickname", ""),
-            avatar=row.get("avatar", ""),
+            uid=row.get("uid") or "",
+            nickname=row.get("nickname") or "",
+            avatar=row.get("avatar") or "",
             title=title,
             cover=cover,
             sort_time=row.get("last_live_at", ""),

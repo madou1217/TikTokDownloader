@@ -549,7 +549,12 @@ class Database:
 
     async def count_douyin_works_today(self, date_str: str) -> int:
         await self.cursor.execute(
-            "SELECT COUNT(1) AS total FROM douyin_work WHERE create_date=?;",
+            """SELECT COUNT(1) AS total
+            FROM douyin_work w
+            WHERE w.create_date=?
+            AND EXISTS (
+                SELECT 1 FROM douyin_user u WHERE u.sec_user_id = w.sec_user_id
+            );""",
             (date_str,),
         )
         row = await self.cursor.fetchone()
@@ -562,8 +567,9 @@ class Database:
     ) -> int:
         await self.cursor.execute(
             """SELECT COUNT(1) AS total
-            FROM douyin_work
-            WHERE create_date=? AND sec_user_id=?;""",
+            FROM douyin_work w
+            JOIN douyin_user u ON w.sec_user_id = u.sec_user_id
+            WHERE w.create_date=? AND w.sec_user_id=?;""",
             (date_str, sec_user_id),
         )
         row = await self.cursor.fetchone()
@@ -580,9 +586,12 @@ class Database:
         offset = (page - 1) * page_size
         await self.cursor.execute(
             """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
-            w.cover, w.play_count, w.width, w.height, u.nickname, u.avatar, u.uid
+            w.cover, w.play_count, w.width, w.height,
+            COALESCE(u.nickname, '') AS nickname,
+            COALESCE(u.avatar, '') AS avatar,
+            COALESCE(u.uid, '') AS uid
             FROM douyin_work w
-            LEFT JOIN douyin_user u ON w.sec_user_id = u.sec_user_id
+            JOIN douyin_user u ON w.sec_user_id = u.sec_user_id
             WHERE w.create_date=?
             ORDER BY w.create_ts DESC
             LIMIT ? OFFSET ?;""",
@@ -602,9 +611,12 @@ class Database:
         offset = (page - 1) * page_size
         await self.cursor.execute(
             """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
-            w.cover, w.play_count, w.width, w.height, u.nickname, u.avatar, u.uid
+            w.cover, w.play_count, w.width, w.height,
+            COALESCE(u.nickname, '') AS nickname,
+            COALESCE(u.avatar, '') AS avatar,
+            COALESCE(u.uid, '') AS uid
             FROM douyin_work w
-            LEFT JOIN douyin_user u ON w.sec_user_id = u.sec_user_id
+            JOIN douyin_user u ON w.sec_user_id = u.sec_user_id
             WHERE w.create_date=? AND w.sec_user_id=?
             ORDER BY w.create_ts DESC
             LIMIT ? OFFSET ?;""",
@@ -614,7 +626,10 @@ class Database:
 
     async def count_douyin_user_works(self, sec_user_id: str) -> int:
         await self.cursor.execute(
-            "SELECT COUNT(1) AS total FROM douyin_work WHERE sec_user_id=?;",
+            """SELECT COUNT(1) AS total
+            FROM douyin_work w
+            JOIN douyin_user u ON w.sec_user_id = u.sec_user_id
+            WHERE w.sec_user_id=?;""",
             (sec_user_id,),
         )
         row = await self.cursor.fetchone()
@@ -631,9 +646,12 @@ class Database:
         offset = (page - 1) * page_size
         await self.cursor.execute(
             """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
-            w.cover, w.play_count, w.width, w.height, u.nickname, u.avatar, u.uid
+            w.cover, w.play_count, w.width, w.height,
+            COALESCE(u.nickname, '') AS nickname,
+            COALESCE(u.avatar, '') AS avatar,
+            COALESCE(u.uid, '') AS uid
             FROM douyin_work w
-            LEFT JOIN douyin_user u ON w.sec_user_id = u.sec_user_id
+            JOIN douyin_user u ON w.sec_user_id = u.sec_user_id
             WHERE w.sec_user_id=?
             ORDER BY w.create_ts DESC
             LIMIT ? OFFSET ?;""",
@@ -660,10 +678,13 @@ class Database:
         page_size = max(page_size, 1)
         offset = (page - 1) * page_size
         await self.cursor.execute(
-            """SELECT id, sec_user_id, uid, nickname, avatar, cover, has_works, status,
-            is_live, live_width, live_height, has_new_today, auto_update,
-            update_window_start, update_window_end, last_live_at, last_new_at,
-            last_fetch_at, created_at, updated_at
+            """SELECT id, sec_user_id,
+            COALESCE(uid, '') AS uid,
+            COALESCE(nickname, '') AS nickname,
+            COALESCE(avatar, '') AS avatar,
+            cover, has_works, status, is_live, live_width, live_height,
+            has_new_today, auto_update, update_window_start, update_window_end,
+            last_live_at, last_new_at, last_fetch_at, created_at, updated_at
             FROM douyin_user
             WHERE is_live=1 AND substr(last_live_at, 1, 10)=?
             ORDER BY last_live_at DESC
