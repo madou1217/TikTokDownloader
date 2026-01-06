@@ -113,6 +113,7 @@ class APIServer(TikTok):
         self._refresh_workers = []
         self._refresh_pending = set()
         self._orphan_cleanup_at = None
+        self._feed_subscribers = set()
 
     @staticmethod
     def _hash_cookie(cookie: str) -> str:
@@ -1046,8 +1047,28 @@ class APIServer(TikTok):
             removed = await self.database.delete_orphan_douyin_works()
             if removed:
                 self.logger.info(_("已清理孤儿作品: %s") % removed)
+                self._notify_feed_update(
+                    "delete",
+                    {"reason": "cleanup", "works_removed": removed},
+                )
         except Exception:
             self.logger.error(_("清理孤儿作品失败"))
+
+    def _notify_feed_update(self, reason: str, payload: dict | None = None) -> None:
+        if not self._feed_subscribers:
+            return
+        data = {
+            "reason": reason,
+            "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        if payload:
+            data.update(payload)
+        event = {"type": "feed", "data": data}
+        for queue in list(self._feed_subscribers):
+            try:
+                queue.put_nowait(event)
+            except asyncio.QueueFull:
+                continue
 
     async def _build_daily_feed_page(
         self,
@@ -1274,6 +1295,11 @@ class APIServer(TikTok):
     def _get_cached_live_info(self, sec_user_id: str) -> dict | None:
         return self._douyin_live_cache.get(sec_user_id)
 
+    def _clear_live_cache(self, sec_user_id: str) -> None:
+        if not sec_user_id:
+            return
+        self._douyin_live_cache.pop(sec_user_id, None)
+
     async def _build_live_info(
         self,
         extract: AccountLive,
@@ -1367,6 +1393,11 @@ class APIServer(TikTok):
         inserted = await self.database.insert_douyin_works(today_works)
         if today_works:
             await self.database.update_douyin_user_new(sec_user_id, True)
+        if inserted:
+            self._notify_feed_update(
+                "video",
+                {"sec_user_id": sec_user_id, "count": inserted},
+            )
         return {
             "items": today_works,
             "inserted": inserted,
@@ -1418,6 +1449,14 @@ class APIServer(TikTok):
                     await self.database.update_douyin_user_live_size(
                         sec_user_id, width, height
                     )
+            self._notify_feed_update(
+                "live",
+                {
+                    "sec_user_id": sec_user_id,
+                    "web_rid": live_info.get("web_rid") if isinstance(live_info, dict) else "",
+                    "room_id": live_info.get("room_id") if isinstance(live_info, dict) else "",
+                },
+            )
         if live_info:
             self._cache_live_info(sec_user_id, live_info)
         return live_info or {}
@@ -1959,7 +1998,12 @@ class APIServer(TikTok):
         async def delete_douyin_user(
             sec_user_id: str, token: str = Depends(token_dependency)
         ):
-            await self.database.delete_douyin_user(sec_user_id)
+            removed = await self.database.delete_douyin_user_with_works(sec_user_id)
+            self._clear_live_cache(sec_user_id)
+            self._notify_feed_update(
+                "delete",
+                {"sec_user_id": sec_user_id, "works_removed": removed},
+            )
 
         @self.server.get(
             "/admin/douyin/cookies",
@@ -2128,6 +2172,46 @@ class APIServer(TikTok):
             token: str = Depends(token_dependency),
         ):
             return await self._build_daily_feed_page(page, page_size)
+
+        @self.server.get(
+            "/client/douyin/feed/stream",
+            summary=_("订阅播放列表更新"),
+            tags=[_("客户端")],
+        )
+        async def stream_douyin_feed(
+            request: Request,
+        ):
+            queue: asyncio.Queue = asyncio.Queue(maxsize=10)
+            self._feed_subscribers.add(queue)
+
+            async def event_generator():
+                try:
+                    yield "event: ready\ndata: ok\n\n"
+                    while True:
+                        if await request.is_disconnected():
+                            break
+                        try:
+                            event = await asyncio.wait_for(queue.get(), timeout=15)
+                            event_type = event.get("type") or "feed"
+                            payload = json.dumps(
+                                event.get("data") or {},
+                                ensure_ascii=False,
+                            )
+                            yield f"event: {event_type}\ndata: {payload}\n\n"
+                        except asyncio.TimeoutError:
+                            yield "event: ping\ndata: {}\n\n"
+                finally:
+                    self._feed_subscribers.discard(queue)
+
+            return StreamingResponse(
+                event_generator(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
         @self.server.get(
             "/client/douyin/daily/feed",

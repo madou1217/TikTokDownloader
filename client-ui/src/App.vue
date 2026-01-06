@@ -133,7 +133,7 @@
             ref="videoRef"
             class="player-video"
             controls
-            autoplay
+            :autoplay="!state.player.suppressAutoplay"
             :muted="!state.audioUnlocked"
             playsinline
             preload="metadata"
@@ -191,6 +191,31 @@
             </span>
             点击进入直播间
           </a>
+          <button
+            v-if="state.player.replayReady"
+            class="stage-replay"
+            type="button"
+            @click="replayCurrent"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M4 12a8 8 0 1 1 2.3 5.7"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <path
+                d="M4 8v4h4"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            重新播放
+          </button>
           <button
             class="fullscreen-btn"
             type="button"
@@ -258,11 +283,14 @@
           <div v-if="state.player.loading" class="stage-mask">
             {{ state.player.loadingHint || "正在加载播放源..." }}
           </div>
-          <div v-else-if="state.player.nextPreview" class="stage-hint">
-            即将播放：{{ state.player.nextPreview }}
-          </div>
           <div v-else-if="state.player.error" class="stage-mask error">
             {{ state.player.error }}
+          </div>
+          <div v-else-if="state.player.notice" class="stage-mask">
+            {{ state.player.notice }}
+          </div>
+          <div v-else-if="state.player.nextPreview" class="stage-hint">
+            即将播放：{{ state.player.nextPreview }}
           </div>
         </div>
 
@@ -278,6 +306,11 @@ import Hls from "hls.js";
 const videoRef = ref(null);
 const stageRef = ref(null);
 let hlsInstance = null;
+let feedStream = null;
+let feedRefreshTimer = null;
+let feedRefreshPending = false;
+const playbackPositions = new Map();
+const playbackCompleted = new Set();
 
 const state = reactive({
   items: [],
@@ -307,6 +340,11 @@ const state = reactive({
     displayHeight: 0,
     nextPreview: "",
     loadingHint: "",
+    resumeTime: 0,
+    pendingPlay: false,
+    suppressAutoplay: false,
+    replayReady: false,
+    notice: "",
   },
 });
 
@@ -363,6 +401,7 @@ const originUrl = computed(() => {
 
 const prefetchCache = new Map();
 const prefetchQueue = new Set();
+const ACTIVE_ITEM_KEY = "douyin-client-active-id";
 const rawApiBase = import.meta.env.VITE_API_BASE || "";
 const apiBase = rawApiBase.endsWith("/") ? rawApiBase.slice(0, -1) : rawApiBase;
 
@@ -388,6 +427,37 @@ const resolveOrientation = (width, height) => {
   return w >= h ? "horizontal" : "vertical";
 };
 
+const getItemIdentity = (item) => {
+  if (!item) {
+    return "";
+  }
+  if (item.type === "live") {
+    const liveId = item.sec_user_id || item.web_rid || item.room_id || "";
+    return liveId ? `live:${liveId}` : "";
+  }
+  const awemeId = item.aweme_id || "";
+  return awemeId ? `video:${awemeId}` : "";
+};
+
+const readActiveIdentity = () => {
+  try {
+    return localStorage.getItem(ACTIVE_ITEM_KEY) || "";
+  } catch (error) {
+    return "";
+  }
+};
+
+const writeActiveIdentity = (item) => {
+  const identity = getItemIdentity(item);
+  if (!identity) {
+    return;
+  }
+  try {
+    localStorage.setItem(ACTIVE_ITEM_KEY, identity);
+  } catch (error) {
+  }
+};
+
 const applyPlayerSize = (width, height) => {
   const w = Number(width) || 0;
   const h = Number(height) || 0;
@@ -398,6 +468,59 @@ const applyPlayerSize = (width, height) => {
     state.player.orientation = orientation;
   }
   void nextTick(updateDisplaySize);
+};
+
+const applyResumeTime = () => {
+  const resumeAt = Number(state.player.resumeTime) || 0;
+  const video = videoRef.value;
+  if (!resumeAt || !video || state.player.type !== "video") {
+    return false;
+  }
+  const duration = Number(video.duration) || 0;
+  if (!duration) {
+    return false;
+  }
+  const safeTarget = Math.min(resumeAt, Math.max(0, duration - 0.4));
+  try {
+    video.currentTime = safeTarget;
+  } catch (error) {
+  }
+  state.player.resumeTime = 0;
+  return true;
+};
+
+const preparePlaybackState = (item) => {
+  state.player.resumeTime = 0;
+  state.player.pendingPlay = false;
+  state.player.suppressAutoplay = false;
+  state.player.replayReady = false;
+  state.player.notice = "";
+  if (!item || item.type !== "video") {
+    return;
+  }
+  const identity = getItemIdentity(item);
+  if (!identity) {
+    return;
+  }
+  if (playbackCompleted.has(identity)) {
+    state.player.suppressAutoplay = true;
+    state.player.replayReady = true;
+    return;
+  }
+  const resumeAt = playbackPositions.get(identity);
+  if (resumeAt && resumeAt > 1) {
+    state.player.resumeTime = resumeAt;
+  }
+};
+
+const showDeletedNotice = () => {
+  state.player.notice = "当前作品已删除";
+  state.player.error = "";
+  state.player.loading = false;
+  state.player.nextPreview = "";
+  state.player.replayReady = false;
+  state.player.suppressAutoplay = true;
+  cleanupPlayer();
 };
 
 const toggleSidebar = () => {
@@ -502,7 +625,15 @@ const loadFeed = async (append) => {
     state.total = data.total || 0;
     const items = data.items || [];
     state.items = append ? [...state.items, ...items] : items;
-    if (state.activeIndex === -1 && state.items.length) {
+    if (!append && state.items.length) {
+      const storedId = readActiveIdentity();
+      const currentId = getItemIdentity(activeItem.value);
+      const targetId = storedId || currentId;
+      const index = targetId
+        ? state.items.findIndex((item) => getItemIdentity(item) === targetId)
+        : -1;
+      await selectItem(index >= 0 ? index : 0, false);
+    } else if (state.activeIndex === -1 && state.items.length) {
       await selectItem(0, false);
     }
   } catch (error) {
@@ -513,6 +644,85 @@ const loadFeed = async (append) => {
     state.loading = false;
     state.loadingMore = false;
   }
+};
+
+const refreshFeedSilently = async (cause = "") => {
+  const deleteCause = cause === "delete" || cause === "cleanup";
+  if (feedRefreshPending) {
+    return;
+  }
+  feedRefreshPending = true;
+  try {
+    const query = new URLSearchParams({
+      page: "1",
+      page_size: String(state.pageSize),
+    });
+    const data = await apiRequest(`/client/douyin/daily/feed?${query.toString()}`);
+    const items = data.items || [];
+    const activeId = getItemIdentity(activeItem.value) || readActiveIdentity();
+    state.total = data.total || 0;
+    state.page = 1;
+    if (!items.length) {
+      state.items = [];
+      state.activeIndex = -1;
+      if (deleteCause) {
+        showDeletedNotice();
+      }
+      return;
+    }
+    state.items = items;
+    if (activeId) {
+      const index = items.findIndex((item) => getItemIdentity(item) === activeId);
+      if (index >= 0) {
+        state.activeIndex = index;
+        return;
+      }
+    }
+    if (deleteCause) {
+      state.activeIndex = -1;
+      showDeletedNotice();
+      return;
+    }
+    await selectItem(0, false);
+  } catch (error) {
+  } finally {
+    feedRefreshPending = false;
+  }
+};
+
+const scheduleFeedRefresh = (cause = "") => {
+  if (feedRefreshTimer) {
+    clearTimeout(feedRefreshTimer);
+  }
+  feedRefreshTimer = setTimeout(() => {
+    refreshFeedSilently(cause);
+  }, 600);
+};
+
+const connectFeedStream = () => {
+  if (feedStream) {
+    return;
+  }
+  if (typeof EventSource === "undefined") {
+    return;
+  }
+  feedStream = new EventSource(buildApiUrl("/client/douyin/feed/stream"));
+  feedStream.addEventListener("feed", (event) => {
+    let payload = {};
+    try {
+      payload = JSON.parse(event.data || "{}");
+    } catch (error) {
+    }
+    scheduleFeedRefresh(payload?.reason || "");
+  });
+  feedStream.onmessage = () => scheduleFeedRefresh("");
+  feedStream.onerror = () => {
+    if (feedStream) {
+      feedStream.close();
+      feedStream = null;
+    }
+    setTimeout(connectFeedStream, 4000);
+  };
 };
 
 const loadMore = async () => {
@@ -571,6 +781,10 @@ const updateOrientation = () => {
   const video = videoRef.value;
   if (video && video.videoWidth && video.videoHeight) {
     applyPlayerSize(video.videoWidth, video.videoHeight);
+    if (applyResumeTime() && state.player.pendingPlay) {
+      state.player.pendingPlay = false;
+      playMedia();
+    }
     updateDisplaySize();
     return;
   }
@@ -649,6 +863,28 @@ const toggleFullscreen = async () => {
   }
 };
 
+const replayCurrent = async () => {
+  const item = activeItem.value;
+  if (!item || item.type !== "video") {
+    return;
+  }
+  const identity = getItemIdentity(item);
+  if (identity) {
+    playbackCompleted.delete(identity);
+  }
+  state.player.replayReady = false;
+  state.player.suppressAutoplay = false;
+  state.player.notice = "";
+  const video = videoRef.value;
+  if (video) {
+    try {
+      video.currentTime = 0;
+    } catch (error) {
+    }
+  }
+  await playMedia();
+};
+
 const attachVideo = async (url) => {
   cleanupPlayer();
   const video = videoRef.value;
@@ -663,7 +899,13 @@ const attachVideo = async (url) => {
   video.src = sourceUrl;
   await nextTick();
   updateOrientation();
-  await playMedia();
+  if (!state.player.suppressAutoplay) {
+    if (state.player.resumeTime) {
+      state.player.pendingPlay = true;
+    } else {
+      await playMedia();
+    }
+  }
 };
 
 const attachLive = async (url) => {
@@ -803,6 +1045,7 @@ const selectItem = async (index, userAction, keepLoadingHint = false) => {
   state.activeIndex = index;
   state.mobileTitleExpanded = false;
   state.player.nextPreview = "";
+  state.player.notice = "";
   if (!keepLoadingHint) {
     state.player.loadingHint = "";
   }
@@ -813,6 +1056,8 @@ const selectItem = async (index, userAction, keepLoadingHint = false) => {
   if (!item) {
     return;
   }
+  preparePlaybackState(item);
+  writeActiveIdentity(item);
   if (item.type === "live") {
     await resolveLiveSource(item);
   } else {
@@ -844,6 +1089,13 @@ const playPrev = async () => {
 };
 
 const handleEnded = async () => {
+  if (state.player.type === "video") {
+    const identity = getItemIdentity(activeItem.value);
+    if (identity) {
+      playbackCompleted.add(identity);
+      playbackPositions.delete(identity);
+    }
+  }
   if (hasNext.value) {
     state.player.nextPreview = "";
     await playNext(true);
@@ -860,6 +1112,10 @@ const handleTimeUpdate = () => {
   if (!video || state.player.type !== "video") {
     state.player.nextPreview = "";
     return;
+  }
+  const identity = getItemIdentity(activeItem.value);
+  if (identity && !playbackCompleted.has(identity)) {
+    playbackPositions.set(identity, video.currentTime || 0);
   }
   if (!hasNext.value || !Number.isFinite(video.duration) || video.duration <= 0) {
     state.player.nextPreview = "";
@@ -919,11 +1175,14 @@ const onTouchEnd = async (event) => {
 
 let lastWheelAt = 0;
 const onStageWheel = async (event) => {
-  const now = Date.now();
-  if (now - lastWheelAt < 500) {
+  if (state.player.loading) {
     return;
   }
-  if (Math.abs(event.deltaY) < 40) {
+  const now = Date.now();
+  if (now - lastWheelAt < 650) {
+    return;
+  }
+  if (Math.abs(event.deltaY) < 45) {
     return;
   }
   lastWheelAt = now;
@@ -947,6 +1206,7 @@ const onFeedScroll = async (event) => {
 
 onMounted(async () => {
   await loadFeed(false);
+  connectFeedStream();
   const video = videoRef.value;
   if (video) {
     video.addEventListener("ended", handleEnded);
@@ -992,6 +1252,14 @@ onBeforeUnmount(() => {
   }
   if (unlockHandler) {
     window.removeEventListener("pointerdown", unlockHandler);
+  }
+  if (feedStream) {
+    feedStream.close();
+    feedStream = null;
+  }
+  if (feedRefreshTimer) {
+    clearTimeout(feedRefreshTimer);
+    feedRefreshTimer = null;
   }
 });
 </script>

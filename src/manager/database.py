@@ -355,6 +355,24 @@ class Database:
         )
         await self.database.commit()
 
+    async def delete_douyin_user_with_works(self, sec_user_id: str) -> int:
+        await self.cursor.execute(
+            "SELECT COUNT(1) AS total FROM douyin_work WHERE sec_user_id=?;",
+            (sec_user_id,),
+        )
+        row = await self.cursor.fetchone()
+        total = int(row["total"]) if row else 0
+        await self.database.execute(
+            "DELETE FROM douyin_work WHERE sec_user_id=?;",
+            (sec_user_id,),
+        )
+        await self.database.execute(
+            "DELETE FROM douyin_user WHERE sec_user_id=?;",
+            (sec_user_id,),
+        )
+        await self.database.commit()
+        return total
+
     async def delete_orphan_douyin_works(self) -> int:
         await self.cursor.execute(
             """SELECT COUNT(1) AS total
