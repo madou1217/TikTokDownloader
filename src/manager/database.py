@@ -355,6 +355,27 @@ class Database:
         )
         await self.database.commit()
 
+    async def delete_orphan_douyin_works(self) -> int:
+        await self.cursor.execute(
+            """SELECT COUNT(1) AS total
+            FROM douyin_work w
+            WHERE NOT EXISTS (
+                SELECT 1 FROM douyin_user u WHERE u.sec_user_id = w.sec_user_id
+            );"""
+        )
+        row = await self.cursor.fetchone()
+        total = int(row["total"]) if row else 0
+        if total <= 0:
+            return 0
+        await self.database.execute(
+            """DELETE FROM douyin_work
+            WHERE NOT EXISTS (
+                SELECT 1 FROM douyin_user u WHERE u.sec_user_id = douyin_work.sec_user_id
+            );"""
+        )
+        await self.database.commit()
+        return total
+
     async def update_douyin_user_live(
         self,
         sec_user_id: str,

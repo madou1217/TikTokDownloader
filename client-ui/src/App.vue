@@ -428,11 +428,27 @@ const formatFeedTime = (value) => {
   return text;
 };
 
+const shouldProxyStream = (url) => {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    return host.includes("douyin") || host.includes("douyinvod");
+  } catch (error) {
+    return false;
+  }
+};
+
 const streamUrl = (url) => {
   if (!url) {
     return "";
   }
+  if (url.includes("/client/douyin/stream?url=")) {
+    return url.startsWith("/") ? buildApiUrl(url) : url;
+  }
   if (url.startsWith("http://") || url.startsWith("https://")) {
+    if (shouldProxyStream(url)) {
+      return buildApiUrl(`/client/douyin/stream?url=${encodeURIComponent(url)}`);
+    }
     return url;
   }
   if (url.startsWith("/")) {

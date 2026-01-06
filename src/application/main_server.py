@@ -112,6 +112,7 @@ class APIServer(TikTok):
         self._refresh_queue = asyncio.Queue(maxsize=self.REFRESH_QUEUE_SIZE)
         self._refresh_workers = []
         self._refresh_pending = set()
+        self._orphan_cleanup_at = None
 
     @staticmethod
     def _hash_cookie(cookie: str) -> str:
@@ -1032,11 +1033,28 @@ class APIServer(TikTok):
         data = await self._fetch_douyin_detail(detail_id, "", proxy=proxy)
         return data, None
 
+    async def _cleanup_orphan_works(self, force: bool = False) -> None:
+        now = datetime.now()
+        if (
+            not force
+            and self._orphan_cleanup_at
+            and (now - self._orphan_cleanup_at).total_seconds() < 600
+        ):
+            return
+        self._orphan_cleanup_at = now
+        try:
+            removed = await self.database.delete_orphan_douyin_works()
+            if removed:
+                self.logger.info(_("已清理孤儿作品: %s") % removed)
+        except Exception:
+            self.logger.error(_("清理孤儿作品失败"))
+
     async def _build_daily_feed_page(
         self,
         page: int,
         page_size: int,
     ) -> DouyinClientFeedPage:
+        await self._cleanup_orphan_works()
         page = max(page, 1)
         page_size = min(max(page_size, 1), 100)
         today = self._today_str()
@@ -1410,6 +1428,7 @@ class APIServer(TikTok):
         )
         if not setting.get("enabled"):
             return
+        await self._cleanup_orphan_works()
         now = datetime.now()
         current_time = now.strftime("%H:%M")
         if current_time not in set(setting.get("times", [])):

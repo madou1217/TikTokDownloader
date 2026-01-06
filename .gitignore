@@ -8,6 +8,8 @@ __pycache__/
 /Cache/
 /Cache/admin_account_sample.json
 !/.github/
+/static/client/
+/static/admin/
 
 
 # Byte-compiled / optimized / DLL files
