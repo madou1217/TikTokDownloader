@@ -168,15 +168,66 @@ class APIServer(TikTok):
         }
 
     @classmethod
+    def _extract_image_list(cls, item: dict) -> list:
+        if not isinstance(item, dict):
+            return []
+        for key in ("images", "image_infos"):
+            images = item.get(key)
+            if isinstance(images, list):
+                return images
+        image_post_info = item.get("image_post_info")
+        if isinstance(image_post_info, dict):
+            images = image_post_info.get("images") or image_post_info.get("image_list")
+            if isinstance(images, list):
+                return images
+        return []
+
+    @classmethod
+    def _extract_first_image_url(cls, item: dict) -> str:
+        images = cls._extract_image_list(item)
+        for image in images:
+            if isinstance(image, dict):
+                for key in ("url_list", "download_url_list", "download_url"):
+                    url = cls._extract_first_url(image.get(key))
+                    if url:
+                        return url
+            url = cls._extract_first_url(image)
+            if url:
+                return url
+        return ""
+
+    @classmethod
+    def _extract_image_size(cls, item: dict) -> tuple[int, int]:
+        images = cls._extract_image_list(item)
+        for image in images:
+            if not isinstance(image, dict):
+                continue
+            width = int(
+                image.get("width")
+                or image.get("image_width")
+                or image.get("img_width")
+                or 0
+            )
+            height = int(
+                image.get("height")
+                or image.get("image_height")
+                or image.get("img_height")
+                or 0
+            )
+            if width and height:
+                return width, height
+        return 0, 0
+
+    @classmethod
     def _extract_work_cover(cls, item: dict) -> str:
         video = item.get("video") if isinstance(item, dict) else None
         if not isinstance(video, dict):
-            return ""
+            return cls._extract_first_image_url(item)
         for key in ("cover", "origin_cover", "dynamic_cover"):
             url = cls._extract_first_url(video.get(key))
             if url:
                 return url
-        return ""
+        return cls._extract_first_image_url(item)
 
     @staticmethod
     def _extract_play_count(item: dict) -> int:
@@ -294,6 +345,21 @@ class APIServer(TikTok):
         if cls._extract_first_url(video.get("play_url")):
             return True
         return False
+
+    @classmethod
+    def _is_note_item(cls, item: dict) -> bool:
+        if not isinstance(item, dict):
+            return False
+        return bool(
+            item.get("images")
+            or item.get("image_infos")
+            or item.get("image_post_info")
+            or item.get("is_image")
+        )
+
+    @classmethod
+    def _is_work_item(cls, item: dict) -> bool:
+        return cls._is_video_item(item) or cls._is_note_item(item)
 
     @classmethod
     def _normalize_input_url(cls, value: str) -> str:
@@ -679,9 +745,16 @@ class APIServer(TikTok):
             else ""
         )
         author = item.get("author") or {}
+        work_type = "note" if cls._is_note_item(item) else "video"
         video = item.get("video") if isinstance(item, dict) else None
-        width, height = cls._extract_video_size(video)
+        if work_type == "note":
+            width, height = cls._extract_image_size(item)
+            play_url = ""
+        else:
+            width, height = cls._extract_video_size(video)
+            play_url = cls._extract_work_play_url(item)
         return {
+            "type": work_type,
             "sec_user_id": author.get("sec_uid", "") or fallback_sec_user_id,
             "aweme_id": aweme_id,
             "desc": desc,
@@ -693,12 +766,13 @@ class APIServer(TikTok):
             "play_count": cls._extract_play_count(item),
             "width": width,
             "height": height,
-            "play_url": cls._extract_work_play_url(item),
+            "play_url": play_url,
         }
 
     def _build_work_from_row(self, row: dict) -> DouyinWork:
         create_ts = int(row.get("create_ts") or 0)
         return DouyinWork(
+            type=row.get("work_type") or "video",
             sec_user_id=row.get("sec_user_id", ""),
             aweme_id=row.get("aweme_id", ""),
             desc=row.get("desc", ""),
@@ -744,11 +818,16 @@ class APIServer(TikTok):
         }
         return f"https://live.douyin.com/{base}?{urlencode(params)}"
 
-    def _build_video_feed_item(self, row: dict) -> tuple[int, DouyinClientFeedItem]:
+    def _build_work_feed_item(self, row: dict) -> tuple[int, DouyinClientFeedItem]:
         create_ts = int(row.get("create_ts") or 0)
         aweme_id = row.get("aweme_id", "")
+        work_type = row.get("work_type") or "video"
+        if work_type == "note":
+            share_url = f"https://www.douyin.com/note/{aweme_id}" if aweme_id else ""
+        else:
+            share_url = f"https://www.douyin.com/video/{aweme_id}" if aweme_id else ""
         item = DouyinClientFeedItem(
-            type="video",
+            type=work_type,
             sec_user_id=row.get("sec_user_id") or "",
             uid=row.get("uid") or "",
             nickname=row.get("nickname") or "",
@@ -758,7 +837,7 @@ class APIServer(TikTok):
             sort_time=self._format_timestamp(create_ts),
             aweme_id=aweme_id,
             play_count=int(row.get("play_count") or 0),
-            video_url=f"https://www.douyin.com/video/{aweme_id}" if aweme_id else "",
+            video_url=share_url,
             width=int(row.get("width") or 0),
             height=int(row.get("height") or 0),
         )
@@ -813,12 +892,12 @@ class APIServer(TikTok):
         detail = cls._unwrap_detail_data(data)
         video = detail.get("video") if isinstance(detail, dict) else None
         if not isinstance(video, dict):
-            return ""
+            return cls._extract_first_image_url(detail)
         for key in ("cover", "origin_cover", "dynamic_cover"):
             url = cls._extract_first_url(video.get(key))
             if url:
                 return url
-        return ""
+        return cls._extract_first_image_url(detail)
 
     @classmethod
     def _extract_detail_video_url(cls, data: dict) -> str:
@@ -866,10 +945,28 @@ class APIServer(TikTok):
         return ""
 
     @classmethod
+    def _extract_detail_audio_url(cls, data: dict) -> str:
+        detail = cls._unwrap_detail_data(data)
+        if not isinstance(detail, dict):
+            return ""
+        for key in ("music", "music_info"):
+            music = detail.get(key)
+            if not isinstance(music, dict):
+                continue
+            for play_key in ("play_url", "playUrl", "play_url_h264", "play_url_bytevc1"):
+                url = cls._extract_first_url(music.get(play_key))
+                if url:
+                    return url
+        return ""
+
+    @classmethod
     def _extract_detail_size(cls, data: dict) -> tuple[int, int]:
         detail = cls._unwrap_detail_data(data)
         video = detail.get("video") if isinstance(detail, dict) else None
-        return cls._extract_video_size(video)
+        width, height = cls._extract_video_size(video)
+        if width and height:
+            return width, height
+        return cls._extract_image_size(detail)
 
     @staticmethod
     def _is_m3u8_resource(url: str, content_type: str = "") -> bool:
@@ -1212,11 +1309,27 @@ class APIServer(TikTok):
         self,
         page: int,
         page_size: int,
+        sec_user_id: str = "",
     ) -> DouyinClientFeedPage:
         await self._cleanup_orphan_works()
         page = max(page, 1)
         page_size = min(max(page_size, 1), 100)
         today = self._today_str()
+        sec_user_id = sec_user_id.strip()
+        if sec_user_id:
+            video_total = await self.database.count_douyin_user_works(sec_user_id)
+            video_rows = await self.database.list_douyin_user_works(
+                sec_user_id,
+                page,
+                page_size,
+            )
+            items = [self._build_work_feed_item(row)[1] for row in video_rows]
+            return DouyinClientFeedPage(
+                total=video_total,
+                video_total=video_total,
+                live_total=0,
+                items=items,
+            )
         video_total = await self.database.count_douyin_works_today(today)
         live_total = await self.database.count_douyin_live_today(today)
         fetch_size = page * page_size
@@ -1231,7 +1344,7 @@ class APIServer(TikTok):
             fetch_size,
         )
         items_with_sort = [
-            self._build_video_feed_item(row) for row in video_rows
+            self._build_work_feed_item(row) for row in video_rows
         ] + [self._build_live_feed_item(row) for row in live_rows]
         items_with_sort.sort(key=lambda item: item[0], reverse=True)
         start = (page - 1) * page_size
@@ -1488,6 +1601,10 @@ class APIServer(TikTok):
         semaphore = asyncio.Semaphore(self.MEDIA_PROBE_CONCURRENCY)
 
         async def probe(item: dict) -> None:
+            work_type = item.get("type") or item.get("work_type") or "video"
+            if work_type != "video":
+                item.pop("play_url", None)
+                return
             if item.get("width") and item.get("height"):
                 item.pop("play_url", None)
                 return
@@ -1512,8 +1629,8 @@ class APIServer(TikTok):
         )
         if cookie_id and (data or empty_data):
             await self.database.touch_douyin_cookie(cookie_id)
-        video_items = [item for item in data if self._is_video_item(item)]
-        profile_source = video_items[0] if video_items else (data[0] if data else None)
+        work_items = [item for item in data if self._is_work_item(item)]
+        profile_source = work_items[0] if work_items else (data[0] if data else None)
         if profile_source:
             profile = self._extract_author_profile(profile_source)
             await self.database.update_douyin_user_profile(
@@ -1524,7 +1641,7 @@ class APIServer(TikTok):
                 profile.get("cover", ""),
             )
         await self.database.update_douyin_user_fetch_time(sec_user_id)
-        works = [self._extract_work_brief(item, sec_user_id) for item in video_items]
+        works = [self._extract_work_brief(item, sec_user_id) for item in work_items]
         today = self._today_str()
         today_works = [item for item in works if item.get("create_date") == today]
         await self._fill_work_sizes(today_works)
@@ -2007,6 +2124,7 @@ class APIServer(TikTok):
                     if profile_source
                     else {"uid": "", "nickname": "", "avatar": "", "cover": ""}
                 )
+                work_items = [item for item in data if self._is_work_item(item)]
                 video_items = [item for item in data if self._is_video_item(item)]
                 if video_items:
                     uid, nickname, _ = self.extractor.preprocessing_data(
@@ -2019,6 +2137,19 @@ class APIServer(TikTok):
                         sec_user_id=sec_user_id,
                         uid=uid or profile.get("uid", ""),
                         nickname=nickname or profile.get("nickname", ""),
+                        avatar=profile.get("avatar", ""),
+                        cover=profile.get("cover", ""),
+                        has_works=True,
+                        status="active",
+                    )
+                    self._trigger_refresh_latest(sec_user_id)
+                    self._trigger_refresh_live(sec_user_id)
+                    return DouyinUser(**self._normalize_user_row(record))
+                if work_items:
+                    record = await self.database.upsert_douyin_user(
+                        sec_user_id=sec_user_id,
+                        uid=profile.get("uid", ""),
+                        nickname=profile.get("nickname", ""),
                         avatar=profile.get("avatar", ""),
                         cover=profile.get("cover", ""),
                         has_works=True,
@@ -2098,10 +2229,10 @@ class APIServer(TikTok):
                 await self.database.touch_douyin_cookie(cookie_id)
             await self.database.update_douyin_user_fetch_time(sec_user_id)
             await self.database.clear_douyin_user_new(sec_user_id)
-            video_items = [item for item in data if self._is_video_item(item)]
+            work_items = [item for item in data if self._is_work_item(item)]
             items = [
                 DouyinWork(**self._extract_work_brief(i, sec_user_id))
-                for i in video_items
+                for i in work_items
             ]
             return DouyinWorkPage(items=items, next_cursor=next_cursor, has_more=has_more)
 
@@ -2435,8 +2566,9 @@ class APIServer(TikTok):
         async def list_douyin_daily_feed_client(
             page: int = 1,
             page_size: int = 30,
+            sec_user_id: str = "",
         ):
-            return await self._build_daily_feed_page(page, page_size)
+            return await self._build_daily_feed_page(page, page_size, sec_user_id)
 
         @self.server.get(
             "/client/douyin/detail",
@@ -2455,12 +2587,14 @@ class APIServer(TikTok):
             detail = self._unwrap_detail_data(data)
             author = detail.get("author") if isinstance(detail, dict) else None
             author = author if isinstance(author, dict) else {}
+            is_note = self._is_note_item(detail)
             payload = {
                 "aweme_id": aweme_id,
                 "title": detail.get("desc", "") if isinstance(detail, dict) else "",
                 "cover": self._extract_detail_cover(detail),
                 "video_url": self._extract_detail_video_url(detail),
-                "type": "note" if detail.get("images") else "video",
+                "audio_url": self._extract_detail_audio_url(detail) if is_note else "",
+                "type": "note" if is_note else "video",
                 "sec_user_id": author.get("sec_uid")
                 or author.get("secUid")
                 or author.get("sec_user_id")

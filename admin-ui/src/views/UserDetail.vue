@@ -53,6 +53,9 @@
           <span :class="['pill', state.user.status]">
             {{ formatStatus(state.user.status) }}
           </span>
+          <a class="ghost btn-mini" :href="clientUserUrl" target="_blank" rel="noreferrer">
+            观看用户作品
+          </a>
           <button class="icon-button info-button" @click="toggleInfo" aria-label="信息">
             i
           </button>
@@ -258,6 +261,12 @@ const formatStatus = (value) => {
 const nextAutoUpdateText = computed(
   () => state.user.next_auto_update_at || "-"
 );
+const clientUserUrl = computed(() => {
+  if (!userId.value) {
+    return "/client-ui/";
+  }
+  return `/client-ui/user/${encodeURIComponent(userId.value)}`;
+});
 
 const toggleInfo = () => {
   state.showInfo = !state.showInfo;
@@ -300,6 +309,9 @@ const workUrl = (item) => {
   const awemeId = item?.aweme_id || "";
   if (!awemeId) {
     return "";
+  }
+  if (item?.type === "note") {
+    return `https://www.douyin.com/note/${awemeId}`;
   }
   return `https://www.douyin.com/video/${awemeId}`;
 };

@@ -30,6 +30,9 @@
       >
         计划任务
       </RouterLink>
+      <a class="tab" href="/client-ui/" target="_blank" rel="noreferrer">
+        客户端
+      </a>
     </nav>
 
     <main class="content">

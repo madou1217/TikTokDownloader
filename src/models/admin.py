@@ -39,6 +39,7 @@ class DouyinUserSettingsUpdate(BaseModel):
 
 
 class DouyinWork(BaseModel):
+    type: str = "video"
     sec_user_id: str = ""
     aweme_id: str = ""
     desc: str = ""

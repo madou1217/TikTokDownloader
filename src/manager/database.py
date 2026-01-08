@@ -99,6 +99,7 @@ class Database:
             play_count INTEGER NOT NULL DEFAULT 0,
             width INTEGER NOT NULL DEFAULT 0,
             height INTEGER NOT NULL DEFAULT 0,
+            work_type TEXT NOT NULL DEFAULT 'video',
             created_at TEXT NOT NULL
             );"""
         )
@@ -142,6 +143,7 @@ class Database:
             "play_count": "INTEGER NOT NULL DEFAULT 0",
             "width": "INTEGER NOT NULL DEFAULT 0",
             "height": "INTEGER NOT NULL DEFAULT 0",
+            "work_type": "TEXT NOT NULL DEFAULT 'video'",
         }
         for name, ddl in work_columns.items():
             if name not in work_existing:
@@ -557,8 +559,8 @@ class Database:
             cursor = await self.database.execute(
                 """INSERT INTO douyin_work (
                 sec_user_id, aweme_id, desc, create_ts, create_date,
-                cover, play_count, width, height, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                cover, play_count, width, height, work_type, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(aweme_id) DO UPDATE SET
                     sec_user_id=excluded.sec_user_id,
                     desc=excluded.desc,
@@ -567,7 +569,8 @@ class Database:
                     cover=excluded.cover,
                     play_count=excluded.play_count,
                     width=excluded.width,
-                    height=excluded.height;""",
+                    height=excluded.height,
+                    work_type=excluded.work_type;""",
                 (
                     item.get("sec_user_id", ""),
                     item.get("aweme_id", ""),
@@ -578,6 +581,7 @@ class Database:
                     int(item.get("play_count") or 0),
                     int(item.get("width") or 0),
                     int(item.get("height") or 0),
+                    item.get("work_type") or item.get("type") or "video",
                     now,
                 ),
             )
@@ -625,7 +629,7 @@ class Database:
         offset = (page - 1) * page_size
         await self.cursor.execute(
             """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
-            w.cover, w.play_count, w.width, w.height,
+            w.cover, w.play_count, w.width, w.height, w.work_type,
             COALESCE(u.nickname, '') AS nickname,
             COALESCE(u.avatar, '') AS avatar,
             COALESCE(u.uid, '') AS uid
@@ -650,7 +654,7 @@ class Database:
         offset = (page - 1) * page_size
         await self.cursor.execute(
             """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
-            w.cover, w.play_count, w.width, w.height,
+            w.cover, w.play_count, w.width, w.height, w.work_type,
             COALESCE(u.nickname, '') AS nickname,
             COALESCE(u.avatar, '') AS avatar,
             COALESCE(u.uid, '') AS uid
@@ -685,7 +689,7 @@ class Database:
         offset = (page - 1) * page_size
         await self.cursor.execute(
             """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
-            w.cover, w.play_count, w.width, w.height,
+            w.cover, w.play_count, w.width, w.height, w.work_type,
             COALESCE(u.nickname, '') AS nickname,
             COALESCE(u.avatar, '') AS avatar,
             COALESCE(u.uid, '') AS uid

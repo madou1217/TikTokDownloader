@@ -247,6 +247,10 @@ body {
   background: rgba(249, 115, 22, 0.9);
 }
 
+.type-tag.note {
+  background: rgba(59, 130, 246, 0.9);
+}
+
 .feed-info {
   display: grid;
   gap: 8px;

@@ -22,8 +22,8 @@
       <aside class="feed-panel" :class="{ collapsed: state.sidebarCollapsed }">
         <div class="panel-header">
           <div>
-            <h2>今日列表</h2>
-            <p class="muted">视频与直播混合排序。</p>
+            <h2>{{ feedTitle }}</h2>
+            <p v-if="feedHint" class="muted">{{ feedHint }}</p>
           </div>
           <div class="panel-tools">
             <span class="count">{{ state.total }} 条</span>
@@ -47,7 +47,7 @@
               />
               <div v-else class="thumb-fallback">暂无封面</div>
               <span
-                v-if="item.type === 'video' && isPlaybackCompleted(item)"
+                v-if="isPlayableItem(item) && isPlaybackCompleted(item)"
                 class="thumb-replay"
                 role="button"
                 tabindex="0"
@@ -77,7 +77,7 @@
                 </span>
               </span>
               <span :class="['type-tag', item.type]">
-                {{ item.type === "live" ? "直播" : "视频" }}
+                {{ getTypeLabel(item.type) }}
               </span>
             </div>
             <div class="feed-info">
@@ -108,13 +108,13 @@
               <span class="name">{{ item.nickname || item.uid || "未知账号" }}</span>
               <span class="time">{{ formatFeedTime(item.sort_time || item.last_live_at) }}</span>
             </div>
-            <div v-if="item.type === 'video'" class="feed-progress">
+            <div v-if="isPlayableItem(item)" class="feed-progress">
               <div
                 class="feed-progress-bar"
                 :style="{ width: `${getPlaybackPercent(item)}%` }"
               ></div>
             </div>
-            <div v-if="item.type === 'video'" class="feed-progress-text">
+            <div v-if="isPlayableItem(item)" class="feed-progress-text">
               {{ getPlaybackLabel(item) }}
             </div>
           </div>
@@ -359,6 +359,9 @@ const state = reactive({
   sidebarCollapsed: false,
   audioUnlocked: false,
   mobileTitleExpanded: false,
+  filter: {
+    secUserId: "",
+  },
   player: {
     type: "",
     title: "",
@@ -390,14 +393,28 @@ const hasPrev = computed(() => state.items.length > 0 && state.activeIndex > 0);
 const hasNext = computed(
   () => state.items.length > 0 && state.activeIndex < state.items.length - 1
 );
+const feedTitle = computed(() => {
+  if (!state.filter.secUserId) {
+    return "今日列表";
+  }
+  const namedItem = state.items.find((item) => item?.nickname);
+  const displayName = namedItem?.nickname || state.filter.secUserId;
+  return `${displayName}用户合集`;
+});
+const feedHint = computed(() => {
+  if (state.filter.secUserId) {
+    return "不限时间，按更新时间排序。";
+  }
+  return "视频与直播混合排序。";
+});
 const activeTypeLabel = computed(() => {
   if (!state.player.type) {
     return "播放源";
   }
-  return state.player.type === "live" ? "直播" : "视频";
+  return getTypeLabel(state.player.type);
 });
 const videoPreload = computed(() => {
-  return state.player.type === "video" ? "auto" : "metadata";
+  return isPlayableType(state.player.type) ? "auto" : "metadata";
 });
 const stageStyle = computed(() => {
   if (!state.player.cover) {
@@ -433,6 +450,9 @@ const originUrl = computed(() => {
     return "";
   }
   if (activeItem.value.aweme_id) {
+    if (activeItem.value.type === "note") {
+      return `https://www.douyin.com/note/${activeItem.value.aweme_id}`;
+    }
     return `https://www.douyin.com/video/${activeItem.value.aweme_id}`;
   }
   return "";
@@ -494,7 +514,8 @@ const getItemIdentity = (item) => {
     return liveId ? `live:${liveId}` : "";
   }
   const awemeId = item.aweme_id || "";
-  return awemeId ? `video:${awemeId}` : "";
+  const prefix = item.type === "note" ? "note" : "video";
+  return awemeId ? `${prefix}:${awemeId}` : "";
 };
 
 const readActiveIdentity = () => {
@@ -721,7 +742,7 @@ const attemptPlaybackHeal = async () => {
 const applyResumeTime = () => {
   const resumeAt = Number(state.player.resumeTime) || 0;
   const video = videoRef.value;
-  if (!resumeAt || !video || state.player.type !== "video") {
+  if (!resumeAt || !video || !isPlayableType(state.player.type)) {
     return false;
   }
   const duration = Number(video.duration) || 0;
@@ -743,7 +764,7 @@ const preparePlaybackState = (item) => {
   state.player.suppressAutoplay = false;
   state.player.replayReady = false;
   state.player.notice = "";
-  if (!item || item.type !== "video") {
+  if (!isPlayableItem(item)) {
     return;
   }
   const identity = getItemIdentity(item);
@@ -773,7 +794,7 @@ const preparePlaybackState = (item) => {
 };
 
 const isPlaybackCompleted = (item) => {
-  if (!item || item.type !== "video") {
+  if (!isPlayableItem(item)) {
     return false;
   }
   playbackRevision.value;
@@ -790,7 +811,7 @@ const isPlaybackCompleted = (item) => {
 
 const getPlaybackPercent = (item) => {
   playbackRevision.value;
-  if (!item || item.type !== "video") {
+  if (!isPlayableItem(item)) {
     return 0;
   }
   const identity = getItemIdentity(item);
@@ -819,7 +840,7 @@ const getPlaybackPercent = (item) => {
 };
 
 const getPlaybackLabel = (item) => {
-  if (!item || item.type !== "video") {
+  if (!isPlayableItem(item)) {
     return "";
   }
   playbackRevision.value;
@@ -940,11 +961,85 @@ const apiRequest = async (path, options = {}) => {
   return data;
 };
 
+const resolveUserFilterFromPath = () => {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  const path = window.location.pathname || "";
+  const segments = path.split("/").filter(Boolean);
+  let startIndex = 0;
+  const clientIndex = segments.indexOf("client-ui");
+  if (clientIndex >= 0) {
+    startIndex = clientIndex + 1;
+  }
+  if (segments[startIndex] !== "user") {
+    return "";
+  }
+  const rawId = segments[startIndex + 1] || "";
+  if (!rawId) {
+    return "";
+  }
+  try {
+    return decodeURIComponent(rawId);
+  } catch (error) {
+    return rawId;
+  }
+};
+
+const buildFeedQuery = (page) => {
+  const query = new URLSearchParams({
+    page: String(page),
+    page_size: String(state.pageSize),
+  });
+  if (state.filter.secUserId) {
+    query.set("sec_user_id", state.filter.secUserId);
+  }
+  return query;
+};
+
+const WORK_TYPES = new Set(["video", "note"]);
+
+const isPlayableItem = (item) => {
+  return Boolean(item && WORK_TYPES.has(item.type));
+};
+
+const isPlayableType = (type) => {
+  return WORK_TYPES.has(type);
+};
+
+const getTypeLabel = (type) => {
+  if (type === "live") {
+    return "直播";
+  }
+  if (type === "note") {
+    return "图文";
+  }
+  return "视频";
+};
+
+const resolveDetailType = (detail, fallbackType = "video") => {
+  if (detail?.type === "note" || detail?.type === "video") {
+    return detail.type;
+  }
+  return fallbackType === "note" ? "note" : "video";
+};
+
+const resolveDetailSource = (detail, detailType) => {
+  if (!detail) {
+    return "";
+  }
+  if (detailType === "note") {
+    return detail.audio_url || "";
+  }
+  return detail.video_url || "";
+};
+
 const itemKey = (item, index) => {
   if (item.type === "live") {
     return `live-${item.sec_user_id}-${index}`;
   }
-  return `video-${item.aweme_id || index}`;
+  const prefix = item.type === "note" ? "note" : "video";
+  return `${prefix}-${item.aweme_id || index}`;
 };
 
 const loadFeed = async (append) => {
@@ -954,11 +1049,10 @@ const loadFeed = async (append) => {
     state.loadingMore = true;
   }
   try {
-    const query = new URLSearchParams({
-      page: String(state.page),
-      page_size: String(state.pageSize),
-    });
-    const data = await apiRequest(`/client/douyin/daily/feed?${query.toString()}`);
+    const query = buildFeedQuery(state.page);
+    const data = await apiRequest(
+      `/client/douyin/daily/feed?${query.toString()}`
+    );
     state.total = data.total || 0;
     const items = data.items || [];
     state.items = append ? [...state.items, ...items] : items;
@@ -983,6 +1077,23 @@ const loadFeed = async (append) => {
   }
 };
 
+const syncRouteFilter = async (force = false) => {
+  const nextFilter = resolveUserFilterFromPath();
+  if (!force && nextFilter === state.filter.secUserId) {
+    return;
+  }
+  state.filter.secUserId = nextFilter;
+  state.page = 1;
+  state.items = [];
+  state.total = 0;
+  state.activeIndex = -1;
+  await loadFeed(false);
+};
+
+const handleLocationChange = () => {
+  void syncRouteFilter();
+};
+
 const refreshFeedSilently = async (cause = "") => {
   const deleteCause = cause === "delete" || cause === "cleanup";
   if (feedRefreshPending) {
@@ -990,11 +1101,10 @@ const refreshFeedSilently = async (cause = "") => {
   }
   feedRefreshPending = true;
   try {
-    const query = new URLSearchParams({
-      page: "1",
-      page_size: String(state.pageSize),
-    });
-    const data = await apiRequest(`/client/douyin/daily/feed?${query.toString()}`);
+    const query = buildFeedQuery(1);
+    const data = await apiRequest(
+      `/client/douyin/daily/feed?${query.toString()}`
+    );
     const items = data.items || [];
     const activeId = getItemIdentity(activeItem.value) || readActiveIdentity();
     state.total = data.total || 0;
@@ -1159,7 +1269,7 @@ const updateDisplaySize = () => {
 };
 
 const prefetchDetail = async (item) => {
-  if (!item || item.type !== "video" || !item.aweme_id) {
+  if (!isPlayableItem(item) || !item.aweme_id) {
     return;
   }
   if (prefetchCache.has(item.aweme_id) || prefetchQueue.has(item.aweme_id)) {
@@ -1171,7 +1281,9 @@ const prefetchDetail = async (item) => {
       `/client/douyin/detail?aweme_id=${encodeURIComponent(item.aweme_id)}`
     );
     const detail = data.data || {};
-    if (detail.type === "video" && detail.video_url) {
+    const detailType = resolveDetailType(detail, item.type);
+    const sourceUrl = resolveDetailSource(detail, detailType);
+    if (sourceUrl) {
       prefetchCache.set(item.aweme_id, detail);
     }
   } catch (error) {
@@ -1181,17 +1293,19 @@ const prefetchDetail = async (item) => {
 };
 
 const prefetchStreamSegment = async (item, detail) => {
-  if (!item || item.type !== "video") {
+  if (!isPlayableItem(item)) {
     return;
   }
   const awemeId = item.aweme_id || "";
-  if (!awemeId || !detail?.video_url) {
+  const detailType = resolveDetailType(detail, item.type);
+  const sourceUrl = resolveDetailSource(detail, detailType);
+  if (!awemeId || !sourceUrl) {
     return;
   }
   if (prefetchSegmentCache.has(awemeId) || prefetchSegmentQueue.has(awemeId)) {
     return;
   }
-  const url = prefetchStreamUrl(detail.video_url);
+  const url = prefetchStreamUrl(sourceUrl);
   if (!url) {
     return;
   }
@@ -1214,7 +1328,7 @@ const prefetchStreamSegment = async (item, detail) => {
 
 const prefetchNext = async (index) => {
   const nextItem = state.items[index + 1];
-  if (!nextItem || nextItem.type !== "video") {
+  if (!isPlayableItem(nextItem)) {
     return;
   }
   await prefetchDetail(nextItem);
@@ -1247,7 +1361,7 @@ const toggleFullscreen = async () => {
 
 const replayCurrent = async () => {
   const item = activeItem.value;
-  if (!item || item.type !== "video") {
+  if (!isPlayableItem(item)) {
     return;
   }
   const identity = getItemIdentity(item);
@@ -1276,7 +1390,7 @@ const replayCurrent = async () => {
 };
 
 const replayFromList = async (item, index) => {
-  if (!item || item.type !== "video") {
+  if (!isPlayableItem(item)) {
     return;
   }
   const identity = getItemIdentity(item);
@@ -1441,7 +1555,7 @@ const pickStreamUrl = (hlsMap, flvMap) => {
 const resolveVideoSource = async (item) => {
   state.player.loading = true;
   state.player.error = "";
-  state.player.type = "video";
+  state.player.type = item.type === "note" ? "note" : "video";
   state.player.cover = item.cover || "";
   state.player.title = item.title || item.aweme_id || "未命名作品";
   state.player.avatar = item.avatar || "";
@@ -1457,20 +1571,20 @@ const resolveVideoSource = async (item) => {
       );
       detail = data.data || {};
     }
-    if (detail.type === "note") {
-      state.player.error = "该内容为图文，暂不支持播放";
-      return;
-    }
-    if (!detail.video_url) {
-      state.player.error = "未获取到视频地址";
-      return;
-    }
+    const detailType = resolveDetailType(detail, item.type);
+    const sourceUrl = resolveDetailSource(detail, detailType);
     state.player.cover = detail.cover || state.player.cover;
     state.player.title = detail.title || state.player.title;
     state.player.nickname = detail.nickname || state.player.nickname;
     state.player.avatar = detail.avatar || state.player.avatar;
     applyPlayerSize(detail.width, detail.height);
-    await attachVideo(detail.video_url);
+    state.player.type = detailType;
+    if (!sourceUrl) {
+      state.player.error =
+        detailType === "note" ? "该内容为图文，暂无可播放音频" : "未获取到视频地址";
+      return;
+    }
+    await attachVideo(sourceUrl);
   } catch (error) {
     state.player.error = error.message || "获取视频失败";
   } finally {
@@ -1533,7 +1647,7 @@ const selectItem = async (index, userAction, keepLoadingHint = false) => {
     return;
   }
   const currentItem = activeItem.value;
-  if (currentItem && currentItem.type === "video") {
+  if (isPlayableItem(currentItem)) {
     const currentIdentity = getItemIdentity(currentItem);
     const currentVideo = videoRef.value;
     if (
@@ -1601,7 +1715,7 @@ const playPrev = async () => {
 };
 
 const handleEnded = async () => {
-  if (state.player.type === "video") {
+  if (isPlayableType(state.player.type)) {
     const identity = getItemIdentity(activeItem.value);
     const video = videoRef.value;
     if (identity) {
@@ -1631,7 +1745,7 @@ const handleEnded = async () => {
 
 const handleTimeUpdate = () => {
   const video = videoRef.value;
-  if (!video || state.player.type !== "video") {
+  if (!video || !isPlayableType(state.player.type)) {
     state.player.nextPreview = "";
     return;
   }
@@ -1776,7 +1890,7 @@ const handlePlaybackPlay = () => {
 
 onMounted(async () => {
   loadPlaybackStore();
-  await loadFeed(false);
+  await syncRouteFilter(true);
   connectFeedStream();
   const video = videoRef.value;
   if (video) {
@@ -1797,6 +1911,7 @@ onMounted(async () => {
   resizeHandler = () => {
     updateDisplaySize();
   };
+  window.addEventListener("popstate", handleLocationChange);
   window.addEventListener("resize", resizeHandler);
   void nextTick(updateDisplaySize);
 });
@@ -1836,6 +1951,7 @@ onBeforeUnmount(() => {
   if (unlockHandler) {
     window.removeEventListener("pointerdown", unlockHandler);
   }
+  window.removeEventListener("popstate", handleLocationChange);
   if (feedStream) {
     feedStream.close();
     feedStream = null;
