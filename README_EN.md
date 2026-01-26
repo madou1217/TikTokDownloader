@@ -385,7 +385,7 @@ repository to execute the build process
 
 ## DartNode
 
-[![Powered by DartNode](docs/DartNode_AD.png)](https://dartnode.com "Powered by DartNode - Free VPS for Open Source")
+[![Powered by DartNode](docs/AD/DartNode_AD.png)](https://dartnode.com "Powered by DartNode - Free VPS for Open Source")
 
 ***
 
@@ -396,9 +396,16 @@ repository to execute the build process
 
 ***
 
+## Thordata
+
+<p><a href="https://www.thordata.com/?ls=github&lk=TikTokDownloader"><img src="docs/AD/Thordata_EN_AD.jpg" alt="Thordata" width="600" height="314"></a></p>
+<p><a href="https://www.thordata.com/?ls=github&lk=TikTokDownloader">Thordata</a>：Reliable and cost-effective residential proxies for streamlined global data acquisition. Register now to receive 1GB of residential proxy traffic and 2,000 SERP API credits. Use code <b>THOR66</b> for a 30% discount.</p>
+
+***
+
 ## TikHub
 
-<p><a href="https://tikhub.io/?utm_source=github&utm_medium=readme&utm_campaign=tiktok_downloader&ref=github_joeanamier_tiktokdownloader"><img src="docs/TIKHUB_AD.jpg" alt="TIKHUB" width="458" height="319"></a></p>
+<p><a href="https://tikhub.io/?utm_source=github&utm_medium=readme&utm_campaign=tiktok_downloader&ref=github_joeanamier_tiktokdownloader"><img src="docs/AD/TIKHUB_AD.jpg" alt="TIKHUB" width="458" height="319"></a></p>
 <p><a href="https://tikhub.io/?utm_source=github&utm_medium=readme&utm_campaign=tiktok_downloader&ref=github_joeanamier_tiktokdownloader">TikHub API</a> offers over 700 endpoints to retrieve and analyze data from 14+ social media platforms—including videos, users, comments, stores, products, trends, and more—enabling one-stop access and analysis of all your data.</p>
 <p>Use <strong>invitation code</strong>: <code>ZrdH8McC</code> to register and recharge to get <code>$2</code> credit.</p>
 
@@ -426,7 +433,6 @@ repository to execute the build process
 * https://github.com/Johnserf-Seed/TikTokDownload
 * https://github.com/Evil0ctal/Douyin_TikTok_Download_API
 * https://github.com/justbeluga/tiktok-web-reverse-engineering
-* https://github.com/NearHuiwen/TiktokDouyinCrawler
 * https://github.com/ihmily/DouyinLiveRecorder
 * https://github.com/encode/httpx/
 * https://github.com/Textualize/rich

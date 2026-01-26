@@ -380,7 +380,7 @@ A: 由于权限限制，您无法直接触发主仓库的 Actions。请通过 Fo
 
 ## DartNode
 
-[![Powered by DartNode](docs/DartNode_AD.png)](https://dartnode.com "Powered by DartNode - Free VPS for Open Source")
+[![Powered by DartNode](docs/AD/DartNode_AD.png)](https://dartnode.com "Powered by DartNode - Free VPS for Open Source")
 
 ***
 
@@ -391,9 +391,16 @@ A: 由于权限限制，您无法直接触发主仓库的 Actions。请通过 Fo
 
 ***
 
+## Thordata
+
+<p><a href="https://www.thordata.com/?ls=github&lk=TikTokDownloader"><img src="docs/AD/Thordata_CN_AD.jpg" alt="Thordata" width="600" height="314"></a></p>
+<p><a href="https://www.thordata.com/?ls=github&lk=TikTokDownloader">Thordata</a>：可靠且价格实惠的住宅代理，一键助您收集全球数据；注册即可免费获得 1GB 住宅代理和 2000 次 SERP API；凭折扣码 <b>THOR66</b> 可获 30% 折扣。</p>
+
+***
+
 ## TikHub
 
-<p><a href="https://tikhub.io/?utm_source=github&utm_medium=readme&utm_campaign=tiktok_downloader&ref=github_joeanamier_tiktokdownloader"><img src="docs/TIKHUB_AD.jpg" alt="TIKHUB" width="458" height="319"></a></p>
+<p><a href="https://tikhub.io/?utm_source=github&utm_medium=readme&utm_campaign=tiktok_downloader&ref=github_joeanamier_tiktokdownloader"><img src="docs/AD/TIKHUB_AD.jpg" alt="TIKHUB" width="458" height="319"></a></p>
 <p><a href="https://tikhub.io/?utm_source=github&utm_medium=readme&utm_campaign=tiktok_downloader&ref=github_joeanamier_tiktokdownloader">TikHub API</a> 提供超过 700 个端点，可用于从 14+ 个社交媒体平台获取与分析数据 —— 包括视频、用户、评论、商店、商品与趋势等，一站式完成所有数据访问与分析。</p>
 <p>使用 <strong>邀请码</strong>：<code>ZrdH8McC</code> 注册并充值即可获得 <code>$2</code> 额度。</p>
 
@@ -422,7 +429,6 @@ A: 由于权限限制，您无法直接触发主仓库的 Actions。请通过 Fo
 * https://github.com/Johnserf-Seed/TikTokDownload
 * https://github.com/Evil0ctal/Douyin_TikTok_Download_API
 * https://github.com/justbeluga/tiktok-web-reverse-engineering
-* https://github.com/NearHuiwen/TiktokDouyinCrawler
 * https://github.com/ihmily/DouyinLiveRecorder
 * https://github.com/encode/httpx/
 * https://github.com/Textualize/rich
