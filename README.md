@@ -187,6 +187,12 @@ demo()
 </ul>
 </li>
 </ol>
+<p><b>Docker Compose（推荐）</b></p>
+<ul>
+<li>启动后端 + Nginx：<code>docker compose up -d backend nginx</code></li>
+<li>构建前端（admin-ui/client-ui）：<code>docker compose --profile build run --rm frontend-build</code></li>
+<li>访问地址：<code>http://127.0.0.1:8778/admin-ui/</code>、<code>http://127.0.0.1:8778/client-ui/</code></li>
+</ul>
 <p>Docker 容器无法直接访问宿主机的文件系统，部分功能不可用，例如：<code>从浏览器读取 Cookie</code>；其他功能如有异常请反馈！</p>
 <hr>
 

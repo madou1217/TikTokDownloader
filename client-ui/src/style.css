@@ -111,10 +111,16 @@ body {
 .panel-header {
   padding: 18px 20px 10px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.panel-heading {
+  flex: 1 1 200px;
+  min-width: 180px;
 }
 
 .panel-header h2 {
@@ -132,6 +138,24 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex: 1 1 260px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.panel-select select {
+  background: rgba(10, 12, 18, 0.7);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  outline: none;
+}
+
+.panel-select select:focus {
+  border-color: rgba(56, 189, 248, 0.6);
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.18);
 }
 
 .count {
@@ -399,6 +423,28 @@ body {
   gap: 10px;
   flex-wrap: wrap;
   align-items: center;
+}
+
+.playlist-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.playlist-actions select {
+  background: rgba(10, 12, 18, 0.7);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  outline: none;
+}
+
+.playlist-actions select:focus {
+  border-color: rgba(56, 189, 248, 0.6);
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.18);
 }
 
 

@@ -114,6 +114,23 @@ class Database:
             updated_at TEXT NOT NULL
             );"""
         )
+        await self.database.execute(
+            """CREATE TABLE IF NOT EXISTS douyin_playlist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+            );"""
+        )
+        await self.database.execute(
+            """CREATE TABLE IF NOT EXISTS douyin_playlist_item (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            playlist_id INTEGER NOT NULL,
+            aweme_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(playlist_id, aweme_id)
+            );"""
+        )
 
     async def __ensure_columns(self) -> None:
         columns = {
@@ -263,6 +280,43 @@ class Database:
             last_live_at, last_new_at, last_fetch_at, created_at, updated_at
             FROM douyin_user
             ORDER BY updated_at DESC;"""
+        )
+        return [dict(i) for i in await self.cursor.fetchall()]
+
+    async def count_douyin_users_with_works(self) -> int:
+        await self.cursor.execute(
+            """SELECT COUNT(1) AS total
+            FROM douyin_user u
+            WHERE EXISTS (
+                SELECT 1 FROM douyin_work w
+                WHERE w.sec_user_id = u.sec_user_id
+                LIMIT 1
+            );"""
+        )
+        row = await self.cursor.fetchone()
+        return int(row["total"]) if row else 0
+
+    async def list_douyin_users_with_works(
+        self,
+        page: int,
+        page_size: int,
+    ) -> list[dict]:
+        page = max(page, 1)
+        page_size = max(page_size, 1)
+        offset = (page - 1) * page_size
+        await self.cursor.execute(
+            """SELECT id, sec_user_id, uid, nickname, avatar, cover, has_works, status,
+            is_live, has_new_today, auto_update, update_window_start, update_window_end,
+            last_live_at, last_new_at, last_fetch_at, created_at, updated_at
+            FROM douyin_user u
+            WHERE EXISTS (
+                SELECT 1 FROM douyin_work w
+                WHERE w.sec_user_id = u.sec_user_id
+                LIMIT 1
+            )
+            ORDER BY updated_at DESC
+            LIMIT ? OFFSET ?;""",
+            (page_size, offset),
         )
         return [dict(i) for i in await self.cursor.fetchall()]
 
@@ -702,6 +756,33 @@ class Database:
         )
         return [dict(i) for i in await self.cursor.fetchall()]
 
+    async def count_douyin_works_all(self) -> int:
+        await self.cursor.execute("SELECT COUNT(1) AS total FROM douyin_work;")
+        row = await self.cursor.fetchone()
+        return int(row["total"]) if row else 0
+
+    async def list_douyin_works_all(
+        self,
+        page: int,
+        page_size: int,
+    ) -> list[dict]:
+        page = max(page, 1)
+        page_size = min(max(page_size, 1), 100)
+        offset = (page - 1) * page_size
+        await self.cursor.execute(
+            """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
+            w.cover, w.play_count, w.width, w.height, w.work_type,
+            COALESCE(u.nickname, '') AS nickname,
+            COALESCE(u.avatar, '') AS avatar,
+            COALESCE(u.uid, '') AS uid
+            FROM douyin_work w
+            LEFT JOIN douyin_user u ON w.sec_user_id = u.sec_user_id
+            ORDER BY w.create_ts DESC
+            LIMIT ? OFFSET ?;""",
+            (page_size, offset),
+        )
+        return [dict(i) for i in await self.cursor.fetchall()]
+
     async def count_douyin_live_today(self, date_str: str) -> int:
         await self.cursor.execute(
             """SELECT COUNT(1) AS total FROM douyin_user
@@ -735,6 +816,182 @@ class Database:
             (date_str, page_size, offset),
         )
         return [dict(i) for i in await self.cursor.fetchall()]
+
+    async def count_douyin_playlists(self) -> int:
+        await self.cursor.execute("SELECT COUNT(1) AS total FROM douyin_playlist;")
+        row = await self.cursor.fetchone()
+        return int(row["total"]) if row else 0
+
+    async def list_douyin_playlists(
+        self,
+        page: int,
+        page_size: int,
+    ) -> list[dict]:
+        page = max(page, 1)
+        page_size = min(max(page_size, 1), 100)
+        offset = (page - 1) * page_size
+        await self.cursor.execute(
+            """SELECT p.id, p.name, p.created_at, p.updated_at,
+            COUNT(pi.id) AS item_count
+            FROM douyin_playlist p
+            LEFT JOIN douyin_playlist_item pi ON pi.playlist_id = p.id
+            GROUP BY p.id
+            ORDER BY p.updated_at DESC, p.id DESC
+            LIMIT ? OFFSET ?;""",
+            (page_size, offset),
+        )
+        return [dict(i) for i in await self.cursor.fetchall()]
+
+    async def get_douyin_playlist(self, playlist_id: int) -> dict:
+        await self.cursor.execute(
+            """SELECT p.id, p.name, p.created_at, p.updated_at,
+            COUNT(pi.id) AS item_count
+            FROM douyin_playlist p
+            LEFT JOIN douyin_playlist_item pi ON pi.playlist_id = p.id
+            WHERE p.id=?
+            GROUP BY p.id;""",
+            (playlist_id,),
+        )
+        row = await self.cursor.fetchone()
+        return dict(row) if row else {}
+
+    async def create_douyin_playlist(self, name: str) -> dict:
+        now = self._now_str()
+        cursor = await self.database.execute(
+            """INSERT INTO douyin_playlist (name, created_at, updated_at)
+            VALUES (?, ?, ?);""",
+            (name, now, now),
+        )
+        await self.database.commit()
+        return await self.get_douyin_playlist(cursor.lastrowid)
+
+    async def delete_douyin_playlist(self, playlist_id: int) -> None:
+        await self.database.execute(
+            "DELETE FROM douyin_playlist_item WHERE playlist_id=?;",
+            (playlist_id,),
+        )
+        await self.database.execute(
+            "DELETE FROM douyin_playlist WHERE id=?;",
+            (playlist_id,),
+        )
+        await self.database.commit()
+
+    async def clear_douyin_playlist(self, playlist_id: int) -> int:
+        now = self._now_str()
+        cursor = await self.database.execute(
+            "DELETE FROM douyin_playlist_item WHERE playlist_id=?;",
+            (playlist_id,),
+        )
+        await self.database.execute(
+            "UPDATE douyin_playlist SET updated_at=? WHERE id=?;",
+            (now, playlist_id),
+        )
+        await self.database.commit()
+        return int(cursor.rowcount or 0)
+
+    async def insert_douyin_playlist_items(
+        self,
+        playlist_id: int,
+        aweme_ids: list[str],
+    ) -> int:
+        if not aweme_ids:
+            return 0
+        now = self._now_str()
+        inserted = 0
+        for aweme_id in aweme_ids:
+            if not aweme_id:
+                continue
+            cursor = await self.database.execute(
+                """INSERT INTO douyin_playlist_item
+                (playlist_id, aweme_id, created_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(playlist_id, aweme_id) DO NOTHING;""",
+                (playlist_id, aweme_id, now),
+            )
+            if cursor.rowcount and cursor.rowcount > 0:
+                inserted += 1
+        if inserted:
+            await self.database.execute(
+                "UPDATE douyin_playlist SET updated_at=? WHERE id=?;",
+                (now, playlist_id),
+            )
+        await self.database.commit()
+        return inserted
+
+    async def count_douyin_playlist_items(self, playlist_id: int) -> int:
+        await self.cursor.execute(
+            """SELECT COUNT(1) AS total
+            FROM douyin_playlist_item
+            WHERE playlist_id=?;""",
+            (playlist_id,),
+        )
+        row = await self.cursor.fetchone()
+        return int(row["total"]) if row else 0
+
+    async def list_douyin_playlist_items(
+        self,
+        playlist_id: int,
+        page: int,
+        page_size: int,
+    ) -> list[dict]:
+        page = max(page, 1)
+        page_size = min(max(page_size, 1), 100)
+        offset = (page - 1) * page_size
+        await self.cursor.execute(
+            """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
+            w.cover, w.play_count, w.width, w.height, w.work_type,
+            COALESCE(u.nickname, '') AS nickname,
+            COALESCE(u.avatar, '') AS avatar,
+            COALESCE(u.uid, '') AS uid
+            FROM douyin_playlist_item pi
+            JOIN douyin_work w ON w.aweme_id = pi.aweme_id
+            LEFT JOIN douyin_user u ON w.sec_user_id = u.sec_user_id
+            WHERE pi.playlist_id=?
+            ORDER BY pi.created_at DESC
+            LIMIT ? OFFSET ?;""",
+            (playlist_id, page_size, offset),
+        )
+        return [dict(i) for i in await self.cursor.fetchall()]
+
+    async def list_douyin_playlist_item_ids(
+        self,
+        playlist_id: int,
+        aweme_ids: list[str],
+    ) -> list[str]:
+        if not aweme_ids:
+            return []
+        placeholders = ",".join(["?"] * len(aweme_ids))
+        await self.cursor.execute(
+            f"""SELECT aweme_id
+            FROM douyin_playlist_item
+            WHERE playlist_id=? AND aweme_id IN ({placeholders});""",
+            (playlist_id, *aweme_ids),
+        )
+        rows = await self.cursor.fetchall()
+        return [row["aweme_id"] for row in rows]
+
+    async def delete_douyin_playlist_items(
+        self,
+        playlist_id: int,
+        aweme_ids: list[str],
+    ) -> int:
+        if not aweme_ids:
+            return 0
+        placeholders = ",".join(["?"] * len(aweme_ids))
+        cursor = await self.database.execute(
+            f"""DELETE FROM douyin_playlist_item
+            WHERE playlist_id=? AND aweme_id IN ({placeholders});""",
+            (playlist_id, *aweme_ids),
+        )
+        removed = int(cursor.rowcount or 0)
+        if removed:
+            now = self._now_str()
+            await self.database.execute(
+                "UPDATE douyin_playlist SET updated_at=? WHERE id=?;",
+                (now, playlist_id),
+            )
+        await self.database.commit()
+        return removed
 
     async def get_douyin_schedule(self) -> dict:
         await self.cursor.execute(

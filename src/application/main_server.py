@@ -49,6 +49,10 @@ from ..models import (
     DouyinWorkListPage,
     DouyinClientFeedItem,
     DouyinClientFeedPage,
+    DouyinPlaylistCreate,
+    DouyinPlaylist,
+    DouyinPlaylistPage,
+    DouyinPlaylistImport,
     DouyinScheduleSetting,
     GeneralSearch,
     Live,
@@ -1357,6 +1361,28 @@ class APIServer(TikTok):
             items=items,
         )
 
+    async def _build_playlist_feed_page(
+        self,
+        playlist_id: int,
+        page: int,
+        page_size: int,
+    ) -> DouyinClientFeedPage:
+        page = max(page, 1)
+        page_size = min(max(page_size, 1), 100)
+        total = await self.database.count_douyin_playlist_items(playlist_id)
+        rows = await self.database.list_douyin_playlist_items(
+            playlist_id,
+            page,
+            page_size,
+        )
+        items = [self._build_work_feed_item(row)[1] for row in rows]
+        return DouyinClientFeedPage(
+            total=total,
+            video_total=total,
+            live_total=0,
+            items=items,
+        )
+
     async def _fetch_douyin_account_page(
         self,
         sec_user_id: str,
@@ -2183,6 +2209,211 @@ class APIServer(TikTok):
             self._trigger_refresh_live(sec_user_id)
             return DouyinUser(**self._normalize_user_row(record))
 
+        @self.server.get(
+            "/admin/douyin/playlists",
+            summary=_("获取播放列表"),
+            tags=[_("管理")],
+            response_model=DouyinPlaylistPage,
+        )
+        async def list_douyin_playlists(
+            page: int = 1,
+            page_size: int = 20,
+            token: str = Depends(token_dependency),
+        ):
+            page = max(page, 1)
+            page_size = min(max(page_size, 1), 50)
+            total = await self.database.count_douyin_playlists()
+            rows = await self.database.list_douyin_playlists(page, page_size)
+            items = [DouyinPlaylist(**row) for row in rows]
+            return DouyinPlaylistPage(total=total, items=items)
+
+        @self.server.post(
+            "/admin/douyin/playlists",
+            summary=_("创建播放列表"),
+            tags=[_("管理")],
+            response_model=DouyinPlaylist,
+        )
+        async def create_douyin_playlist(
+            payload: DouyinPlaylistCreate,
+            token: str = Depends(token_dependency),
+        ):
+            name = payload.name.strip()
+            if not name:
+                raise HTTPException(status_code=400, detail=_("名称不能为空"))
+            record = await self.database.create_douyin_playlist(name)
+            return DouyinPlaylist(**record)
+
+        @self.server.get(
+            "/admin/douyin/playlists/{playlist_id}",
+            summary=_("获取播放列表详情"),
+            tags=[_("管理")],
+            response_model=DouyinPlaylist,
+        )
+        async def get_douyin_playlist(
+            playlist_id: int,
+            token: str = Depends(token_dependency),
+        ):
+            record = await self.database.get_douyin_playlist(playlist_id)
+            if not record:
+                raise HTTPException(status_code=404, detail=_("播放列表不存在"))
+            return DouyinPlaylist(**record)
+
+        @self.server.delete(
+            "/admin/douyin/playlists/{playlist_id}",
+            summary=_("删除播放列表"),
+            tags=[_("管理")],
+            response_model=DataResponse,
+        )
+        async def delete_douyin_playlist(
+            playlist_id: int,
+            token: str = Depends(token_dependency),
+        ):
+            record = await self.database.get_douyin_playlist(playlist_id)
+            if not record:
+                raise HTTPException(status_code=404, detail=_("播放列表不存在"))
+            await self.database.delete_douyin_playlist(playlist_id)
+            return DataResponse(
+                message=_("删除成功"),
+                data={"playlist_id": playlist_id},
+                params={"playlist_id": playlist_id},
+            )
+
+        @self.server.post(
+            "/admin/douyin/playlists/{playlist_id}/clear",
+            summary=_("清空播放列表"),
+            tags=[_("管理")],
+            response_model=DataResponse,
+        )
+        async def clear_douyin_playlist(
+            playlist_id: int,
+            token: str = Depends(token_dependency),
+        ):
+            record = await self.database.get_douyin_playlist(playlist_id)
+            if not record:
+                raise HTTPException(status_code=404, detail=_("播放列表不存在"))
+            removed = await self.database.clear_douyin_playlist(playlist_id)
+            return DataResponse(
+                message=_("清空成功"),
+                data={"playlist_id": playlist_id, "removed": removed},
+                params={"playlist_id": playlist_id},
+            )
+
+        @self.server.get(
+            "/admin/douyin/playlists/{playlist_id}/items",
+            summary=_("获取播放列表内容"),
+            tags=[_("管理")],
+            response_model=DouyinWorkListPage,
+        )
+        async def list_douyin_playlist_items(
+            playlist_id: int,
+            page: int = 1,
+            page_size: int = 12,
+            token: str = Depends(token_dependency),
+        ):
+            page = max(page, 1)
+            page_size = min(max(page_size, 1), 50)
+            total = await self.database.count_douyin_playlist_items(playlist_id)
+            rows = await self.database.list_douyin_playlist_items(
+                playlist_id,
+                page,
+                page_size,
+            )
+            items = [self._build_work_from_row(row) for row in rows]
+            return DouyinWorkListPage(total=total, items=items)
+
+        @self.server.post(
+            "/admin/douyin/playlists/{playlist_id}/items/import",
+            summary=_("导入作品到播放列表"),
+            tags=[_("管理")],
+            response_model=DataResponse,
+        )
+        async def import_douyin_playlist_items(
+            playlist_id: int,
+            payload: DouyinPlaylistImport,
+            token: str = Depends(token_dependency),
+        ):
+            record = await self.database.get_douyin_playlist(playlist_id)
+            if not record:
+                raise HTTPException(status_code=404, detail=_("播放列表不存在"))
+            inserted = await self.database.insert_douyin_playlist_items(
+                playlist_id,
+                payload.aweme_ids,
+            )
+            return DataResponse(
+                message=_("导入成功"),
+                data={"playlist_id": playlist_id, "inserted": inserted},
+                params={"playlist_id": playlist_id},
+            )
+
+        @self.server.post(
+            "/admin/douyin/playlists/{playlist_id}/items/check",
+            summary=_("检查播放列表作品"),
+            tags=[_("管理")],
+            response_model=DataResponse,
+        )
+        async def check_douyin_playlist_items(
+            playlist_id: int,
+            payload: DouyinPlaylistImport,
+            token: str = Depends(token_dependency),
+        ):
+            record = await self.database.get_douyin_playlist(playlist_id)
+            if not record:
+                raise HTTPException(status_code=404, detail=_("播放列表不存在"))
+            exists = await self.database.list_douyin_playlist_item_ids(
+                playlist_id,
+                payload.aweme_ids,
+            )
+            return DataResponse(
+                message=_("查询成功"),
+                data={"exists": exists},
+                params={"playlist_id": playlist_id},
+            )
+
+        @self.server.post(
+            "/admin/douyin/playlists/{playlist_id}/items/remove",
+            summary=_("移除播放列表作品"),
+            tags=[_("管理")],
+            response_model=DataResponse,
+        )
+        async def remove_douyin_playlist_items(
+            playlist_id: int,
+            payload: DouyinPlaylistImport,
+            token: str = Depends(token_dependency),
+        ):
+            record = await self.database.get_douyin_playlist(playlist_id)
+            if not record:
+                raise HTTPException(status_code=404, detail=_("播放列表不存在"))
+            removed = await self.database.delete_douyin_playlist_items(
+                playlist_id,
+                payload.aweme_ids,
+            )
+            return DataResponse(
+                message=_("移除成功"),
+                data={"playlist_id": playlist_id, "removed": removed},
+                params={"playlist_id": playlist_id},
+            )
+
+        @self.server.get(
+            "/admin/douyin/works/stored",
+            summary=_("获取全部作品库"),
+            tags=[_("管理")],
+            response_model=DouyinWorkListPage,
+        )
+        async def list_douyin_works_stored(
+            page: int = 1,
+            page_size: int = 20,
+            token: str = Depends(token_dependency),
+        ):
+            page = max(page, 1)
+            page_size = min(max(page_size, 1), 50)
+            total = await self.database.count_douyin_works_all()
+            rows = await self.database.list_douyin_works_all(
+                page=page,
+                page_size=page_size,
+            )
+            items = [self._build_work_from_row(row) for row in rows]
+            return DouyinWorkListPage(total=total, items=items)
+
         @self.server.put(
             "/admin/douyin/users/{sec_user_id}/settings",
             summary=_("更新抖音用户设置"),
@@ -2569,6 +2800,83 @@ class APIServer(TikTok):
             sec_user_id: str = "",
         ):
             return await self._build_daily_feed_page(page, page_size, sec_user_id)
+
+        @self.server.get(
+            "/client/douyin/playlists",
+            summary=_("获取播放列表"),
+            tags=[_("客户端")],
+            response_model=DouyinPlaylistPage,
+        )
+        async def list_douyin_playlists_client(
+            page: int = 1,
+            page_size: int = 50,
+        ):
+            page = max(page, 1)
+            page_size = min(max(page_size, 1), 100)
+            total = await self.database.count_douyin_playlists()
+            rows = await self.database.list_douyin_playlists(page, page_size)
+            items = [DouyinPlaylist(**row) for row in rows]
+            return DouyinPlaylistPage(total=total, items=items)
+
+        @self.server.get(
+            "/client/douyin/users/with-works",
+            summary=_("获取有作品的用户"),
+            tags=[_("客户端")],
+            response_model=DouyinUserPage,
+        )
+        async def list_douyin_users_with_works_client(
+            page: int = 1,
+            page_size: int = 200,
+        ):
+            page = max(page, 1)
+            page_size = min(max(page_size, 1), 500)
+            total = await self.database.count_douyin_users_with_works()
+            rows = await self.database.list_douyin_users_with_works(page, page_size)
+            items = [DouyinUser(**self._normalize_user_row(i)) for i in rows]
+            return DouyinUserPage(total=total, items=items)
+
+        @self.server.get(
+            "/client/douyin/playlists/{playlist_id}/feed",
+            summary=_("获取播放列表播放内容"),
+            tags=[_("客户端")],
+            response_model=DouyinClientFeedPage,
+        )
+        async def list_douyin_playlist_feed_client(
+            playlist_id: int,
+            page: int = 1,
+            page_size: int = 30,
+        ):
+            record = await self.database.get_douyin_playlist(playlist_id)
+            if not record:
+                raise HTTPException(status_code=404, detail=_("播放列表不存在"))
+            return await self._build_playlist_feed_page(
+                playlist_id,
+                page,
+                page_size,
+            )
+
+        @self.server.post(
+            "/client/douyin/playlists/{playlist_id}/items",
+            summary=_("添加作品到播放列表"),
+            tags=[_("客户端")],
+            response_model=DataResponse,
+        )
+        async def add_douyin_playlist_item_client(
+            playlist_id: int,
+            payload: DouyinPlaylistImport,
+        ):
+            record = await self.database.get_douyin_playlist(playlist_id)
+            if not record:
+                raise HTTPException(status_code=404, detail=_("播放列表不存在"))
+            inserted = await self.database.insert_douyin_playlist_items(
+                playlist_id,
+                payload.aweme_ids,
+            )
+            return DataResponse(
+                message=_("添加成功"),
+                data={"playlist_id": playlist_id, "inserted": inserted},
+                params={"playlist_id": playlist_id},
+            )
 
         @self.server.get(
             "/client/douyin/detail",

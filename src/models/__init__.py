@@ -28,6 +28,10 @@ from .admin import (
     DouyinClientFeedItem,
     DouyinClientFeedPage,
     DouyinWorkListPage,
+    DouyinPlaylistCreate,
+    DouyinPlaylist,
+    DouyinPlaylistPage,
+    DouyinPlaylistImport,
     DouyinScheduleSetting,
 )
 
@@ -65,5 +69,9 @@ __all__ = (
     "DouyinClientFeedItem",
     "DouyinClientFeedPage",
     "DouyinWorkListPage",
+    "DouyinPlaylistCreate",
+    "DouyinPlaylist",
+    "DouyinPlaylistPage",
+    "DouyinPlaylistImport",
     "DouyinScheduleSetting",
 )

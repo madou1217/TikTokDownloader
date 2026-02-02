@@ -21,11 +21,38 @@
       </button>
       <aside class="feed-panel" :class="{ collapsed: state.sidebarCollapsed }">
         <div class="panel-header">
-          <div>
+          <div class="panel-heading">
             <h2>{{ feedTitle }}</h2>
             <p v-if="feedHint" class="muted">{{ feedHint }}</p>
           </div>
           <div class="panel-tools">
+            <div class="panel-select">
+              <select v-model="state.filter.mode" @change="handleModeChange">
+                <option value="daily">今日</option>
+                <option value="user">用户</option>
+                <option value="playlist">播放列表</option>
+              </select>
+            </div>
+            <div v-if="state.filter.mode === 'user'" class="panel-select">
+              <select v-model="state.filter.secUserId" @change="handleUserChange">
+                <option value="">选择用户</option>
+                <option
+                  v-for="user in state.users"
+                  :key="user.sec_user_id"
+                  :value="user.sec_user_id"
+                >
+                  {{ user.nickname || user.uid || user.sec_user_id }}
+                </option>
+              </select>
+            </div>
+            <div v-if="state.filter.mode === 'playlist'" class="panel-select">
+              <select v-model="state.filter.playlistId" @change="handlePlaylistChange">
+                <option value="">选择播放列表</option>
+                <option v-for="playlist in state.playlists" :key="playlist.id" :value="String(playlist.id)">
+                  {{ playlist.name }}
+                </option>
+              </select>
+            </div>
             <span class="count">{{ state.total }} 条</span>
           </div>
         </div>
@@ -156,6 +183,20 @@
             <button class="ghost" :disabled="!hasNext" @click="playNext">
               下一条
             </button>
+            <div v-if="state.playlists.length" class="playlist-actions">
+              <select
+                v-model="state.playlist.addId"
+                :disabled="!canAddToPlaylist"
+              >
+                <option value="">选择播放列表</option>
+                <option v-for="playlist in state.playlists" :key="playlist.id" :value="String(playlist.id)">
+                  {{ playlist.name }}
+                </option>
+              </select>
+              <button class="ghost" :disabled="!canAddToPlaylist" @click="addToPlaylist">
+                加入播放列表
+              </button>
+            </div>
           </div>
         </div>
 
@@ -361,6 +402,17 @@ const state = reactive({
   mobileTitleExpanded: false,
   filter: {
     secUserId: "",
+    playlistId: "",
+    mode: "daily",
+  },
+  users: [],
+  user: {
+    loading: false,
+  },
+  playlists: [],
+  playlist: {
+    addId: "",
+    loading: false,
   },
   player: {
     type: "",
@@ -393,17 +445,44 @@ const hasPrev = computed(() => state.items.length > 0 && state.activeIndex > 0);
 const hasNext = computed(
   () => state.items.length > 0 && state.activeIndex < state.items.length - 1
 );
+const canAddToPlaylist = computed(() => {
+  const item = activeItem.value;
+  return Boolean(
+    state.playlist.addId &&
+      item &&
+      isPlayableItem(item) &&
+      item.aweme_id
+  );
+});
 const feedTitle = computed(() => {
-  if (!state.filter.secUserId) {
-    return "今日列表";
+  if (state.filter.mode === "user") {
+    if (!state.filter.secUserId) {
+      return "用户合集";
+    }
+    const namedItem = state.items.find((item) => item?.nickname);
+    const displayName = namedItem?.nickname || state.filter.secUserId;
+    return `${displayName}用户合集`;
   }
-  const namedItem = state.items.find((item) => item?.nickname);
-  const displayName = namedItem?.nickname || state.filter.secUserId;
-  return `${displayName}用户合集`;
+  if (state.filter.mode === "playlist") {
+    if (!state.filter.playlistId) {
+      return "播放列表";
+    }
+    const playlist = state.playlists.find(
+      (item) => String(item.id) === String(state.filter.playlistId)
+    );
+    return playlist ? `${playlist.name}播放列表` : "播放列表";
+  }
+  return "今日列表";
 });
 const feedHint = computed(() => {
-  if (state.filter.secUserId) {
+  if (state.filter.mode === "user") {
+    if (!state.filter.secUserId) {
+      return "选择用户后查看。";
+    }
     return "不限时间，按更新时间排序。";
+  }
+  if (state.filter.mode === "playlist") {
+    return "按加入时间倒序排列。";
   }
   return "视频与直播混合排序。";
 });
@@ -961,9 +1040,9 @@ const apiRequest = async (path, options = {}) => {
   return data;
 };
 
-const resolveUserFilterFromPath = () => {
+const resolveFiltersFromPath = () => {
   if (typeof window === "undefined") {
-    return "";
+    return { mode: "daily", secUserId: "", playlistId: "" };
   }
   const path = window.location.pathname || "";
   const segments = path.split("/").filter(Boolean);
@@ -972,29 +1051,84 @@ const resolveUserFilterFromPath = () => {
   if (clientIndex >= 0) {
     startIndex = clientIndex + 1;
   }
-  if (segments[startIndex] !== "user") {
-    return "";
-  }
+  const head = segments[startIndex] || "";
   const rawId = segments[startIndex + 1] || "";
-  if (!rawId) {
-    return "";
+  if (head === "user" && rawId) {
+    try {
+      return { mode: "user", secUserId: decodeURIComponent(rawId), playlistId: "" };
+    } catch (error) {
+      return { mode: "user", secUserId: rawId, playlistId: "" };
+    }
   }
-  try {
-    return decodeURIComponent(rawId);
-  } catch (error) {
-    return rawId;
+  if (head === "playlist" && rawId) {
+    try {
+      return { mode: "playlist", secUserId: "", playlistId: decodeURIComponent(rawId) };
+    } catch (error) {
+      return { mode: "playlist", secUserId: "", playlistId: rawId };
+    }
   }
+  return { mode: "daily", secUserId: "", playlistId: "" };
 };
 
-const buildFeedQuery = (page) => {
+const buildFeedUrl = (page) => {
   const query = new URLSearchParams({
     page: String(page),
     page_size: String(state.pageSize),
   });
-  if (state.filter.secUserId) {
+  if (state.filter.mode === "user" && state.filter.secUserId) {
     query.set("sec_user_id", state.filter.secUserId);
+    return `/client/douyin/daily/feed?${query.toString()}`;
   }
-  return query;
+  if (state.filter.mode === "playlist" && state.filter.playlistId) {
+    return `/client/douyin/playlists/${encodeURIComponent(
+      state.filter.playlistId
+    )}/feed?${query.toString()}`;
+  }
+  return `/client/douyin/daily/feed?${query.toString()}`;
+};
+
+const loadPlaylists = async () => {
+  state.playlist.loading = true;
+  try {
+    const data = await apiRequest("/client/douyin/playlists?page=1&page_size=200");
+    const items = data.items || [];
+    state.playlists = items;
+    if (!state.playlist.addId && items.length) {
+      state.playlist.addId = String(items[0].id);
+    }
+    if (
+      state.filter.playlistId &&
+      !items.some((item) => String(item.id) === String(state.filter.playlistId))
+    ) {
+      state.filter.playlistId = "";
+    }
+  } catch (error) {
+  } finally {
+    state.playlist.loading = false;
+  }
+};
+
+const loadUsers = async () => {
+  state.user.loading = true;
+  try {
+    const data = await apiRequest("/client/douyin/users/with-works?page=1&page_size=200");
+    const items = data.items || [];
+    state.users = items;
+    if (
+      state.filter.secUserId &&
+      !items.some((item) => item.sec_user_id === state.filter.secUserId)
+    ) {
+      state.filter.secUserId = "";
+    }
+  } catch (error) {
+  } finally {
+    state.user.loading = false;
+  }
+};
+
+const resolvePlaylistName = (id) => {
+  const target = state.playlists.find((item) => String(item.id) === String(id));
+  return target?.name || "";
 };
 
 const WORK_TYPES = new Set(["video", "note"]);
@@ -1049,9 +1183,8 @@ const loadFeed = async (append) => {
     state.loadingMore = true;
   }
   try {
-    const query = buildFeedQuery(state.page);
     const data = await apiRequest(
-      `/client/douyin/daily/feed?${query.toString()}`
+      buildFeedUrl(state.page)
     );
     state.total = data.total || 0;
     const items = data.items || [];
@@ -1077,21 +1210,114 @@ const loadFeed = async (append) => {
   }
 };
 
-const syncRouteFilter = async (force = false) => {
-  const nextFilter = resolveUserFilterFromPath();
-  if (!force && nextFilter === state.filter.secUserId) {
+const handlePlaylistChange = async () => {
+  if (state.filter.mode !== "playlist") {
+    state.filter.mode = "playlist";
+  }
+  updateLocationPath("playlist", "", state.filter.playlistId);
+  await applyFilterState();
+};
+
+const handleUserChange = async () => {
+  if (state.filter.mode !== "user") {
+    state.filter.mode = "user";
+  }
+  updateLocationPath("user", state.filter.secUserId, "");
+  await applyFilterState();
+};
+
+const resolveBasePath = () => {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  const segments = (window.location.pathname || "").split("/").filter(Boolean);
+  if (segments.includes("client-ui")) {
+    return "/client-ui";
+  }
+  return "";
+};
+
+const updateLocationPath = (mode, secUserId, playlistId) => {
+  if (typeof window === "undefined") {
     return;
   }
-  state.filter.secUserId = nextFilter;
+  const basePath = resolveBasePath();
+  let target = basePath || "/";
+  if (mode === "user" && secUserId) {
+    target = `${basePath}/user/${encodeURIComponent(secUserId)}`;
+  } else if (mode === "playlist" && playlistId) {
+    target = `${basePath}/playlist/${encodeURIComponent(playlistId)}`;
+  }
+  window.history.pushState({}, "", target || "/");
+};
+
+const applyFilterState = async () => {
   state.page = 1;
   state.items = [];
   state.total = 0;
   state.activeIndex = -1;
+  if (state.filter.mode === "user" && !state.filter.secUserId) {
+    return;
+  }
+  if (state.filter.mode === "playlist" && !state.filter.playlistId) {
+    return;
+  }
   await loadFeed(false);
+};
+
+const syncRouteFilter = async (force = false) => {
+  const nextFilter = resolveFiltersFromPath();
+  if (
+    !force &&
+    nextFilter.mode === state.filter.mode &&
+    nextFilter.secUserId === state.filter.secUserId &&
+    nextFilter.playlistId === state.filter.playlistId
+  ) {
+    return;
+  }
+  state.filter.mode = nextFilter.mode;
+  state.filter.secUserId = nextFilter.secUserId;
+  state.filter.playlistId = nextFilter.playlistId;
+  if (
+    state.filter.mode === "user" &&
+    state.filter.secUserId &&
+    state.users.length &&
+    !state.users.some((item) => item.sec_user_id === state.filter.secUserId)
+  ) {
+    state.filter.secUserId = "";
+  }
+  await applyFilterState();
 };
 
 const handleLocationChange = () => {
   void syncRouteFilter();
+};
+
+const handleModeChange = async () => {
+  if (state.filter.mode === "daily") {
+    state.filter.secUserId = "";
+    state.filter.playlistId = "";
+    updateLocationPath("daily", "", "");
+    await applyFilterState();
+    return;
+  }
+  if (state.filter.mode === "playlist") {
+    state.filter.secUserId = "";
+    if (!state.filter.playlistId && state.playlists.length) {
+      state.filter.playlistId = String(state.playlists[0].id);
+    }
+    updateLocationPath("playlist", "", state.filter.playlistId);
+    await applyFilterState();
+    return;
+  }
+  if (state.filter.mode === "user") {
+    state.filter.playlistId = "";
+    if (!state.filter.secUserId && state.users.length) {
+      state.filter.secUserId = state.users[0].sec_user_id;
+    }
+    updateLocationPath("user", state.filter.secUserId, "");
+    await applyFilterState();
+  }
 };
 
 const refreshFeedSilently = async (cause = "") => {
@@ -1099,11 +1325,16 @@ const refreshFeedSilently = async (cause = "") => {
   if (feedRefreshPending) {
     return;
   }
+  if (state.filter.mode === "user" && !state.filter.secUserId) {
+    return;
+  }
+  if (state.filter.mode === "playlist" && !state.filter.playlistId) {
+    return;
+  }
   feedRefreshPending = true;
   try {
-    const query = buildFeedQuery(1);
     const data = await apiRequest(
-      `/client/douyin/daily/feed?${query.toString()}`
+      buildFeedUrl(1)
     );
     const items = data.items || [];
     const activeId = getItemIdentity(activeItem.value) || readActiveIdentity();
@@ -1420,6 +1651,36 @@ const replayFromList = async (item, index) => {
     }
   }
   await playMedia();
+};
+
+const addToPlaylist = async () => {
+  if (!canAddToPlaylist.value) {
+    return;
+  }
+  const item = activeItem.value;
+  if (!item?.aweme_id) {
+    return;
+  }
+  try {
+    await apiRequest(
+      `/client/douyin/playlists/${encodeURIComponent(state.playlist.addId)}/items`,
+      {
+        method: "POST",
+        body: { aweme_ids: [item.aweme_id] },
+      }
+    );
+    const name = resolvePlaylistName(state.playlist.addId);
+    const message = name ? `已加入播放列表：${name}` : "已加入播放列表";
+    state.player.notice = message;
+    state.player.error = "";
+    setTimeout(() => {
+      if (state.player.notice === message) {
+        state.player.notice = "";
+      }
+    }, 1400);
+  } catch (error) {
+    state.player.error = error.message || "添加失败";
+  }
 };
 
 const attachVideo = async (url) => {
@@ -1890,6 +2151,8 @@ const handlePlaybackPlay = () => {
 
 onMounted(async () => {
   loadPlaybackStore();
+  await loadUsers();
+  await loadPlaylists();
   await syncRouteFilter(true);
   connectFeedStream();
   const video = videoRef.value;

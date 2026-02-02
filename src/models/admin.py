@@ -98,6 +98,27 @@ class DouyinWorkListPage(BaseModel):
     items: list[DouyinWork]
 
 
+class DouyinPlaylistCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+
+
+class DouyinPlaylist(BaseModel):
+    id: int
+    name: str
+    item_count: int = 0
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class DouyinPlaylistPage(BaseModel):
+    total: int
+    items: list[DouyinPlaylist]
+
+
+class DouyinPlaylistImport(BaseModel):
+    aweme_ids: list[str] = Field(default_factory=list)
+
+
 class DouyinScheduleSetting(BaseModel):
     enabled: bool = True
     times: str = ""

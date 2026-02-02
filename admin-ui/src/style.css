@@ -269,6 +269,23 @@ table {
   table-layout: fixed;
 }
 
+.playlist-table-wrap {
+  overflow-x: hidden;
+}
+
+.playlist-table {
+  table-layout: auto;
+}
+
+.playlist-table th,
+.playlist-table td {
+  white-space: normal;
+}
+
+.playlist-table .actions {
+  white-space: nowrap;
+}
+
 .user-table th:first-child,
 .user-table td:first-child {
   width: 280px;
@@ -906,6 +923,13 @@ a.ghost {
   padding: 12px 14px 14px;
   display: grid;
   gap: 6px;
+}
+
+.work-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .work-title {

@@ -18,6 +18,13 @@
       </RouterLink>
       <RouterLink
         class="tab"
+        :class="{ active: isActive('/playlists') }"
+        to="/playlists"
+      >
+        播放列表
+      </RouterLink>
+      <RouterLink
+        class="tab"
         :class="{ active: isActive('/settings') }"
         to="/settings"
       >
