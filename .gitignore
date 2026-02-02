@@ -10,6 +10,9 @@ __pycache__/
 !/.github/
 /static/client/
 /static/admin/
+.DS_Store
+admin-ui/dist/
+client-ui/dist/
 
 
 # Byte-compiled / optimized / DLL files
