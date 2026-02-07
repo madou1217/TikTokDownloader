@@ -414,11 +414,18 @@ class TikTokDownloader:
         await self.check_settings(
             False,
         )
+        if mode:
+            # Web API / 后台模式支持无交互启动，避免容器环境因 stdin EOF 自动退出
+            if not self.config.get("Disclaimer"):
+                await self.database.update_config_data("Disclaimer", 1)
+                self.config["Disclaimer"] = 1
+            language = str(self.option.get("Language", "")).strip()
+            if language not in {"zh_CN", "en_US"}:
+                await self._update_language("zh_CN")
+            await self.main_menu(mode)
+            return
         if await self.disclaimer():
-            if mode:
-                await self.main_menu(mode)
-            else:
-                await self.main_menu(safe_pop(self.run_command))
+            await self.main_menu(safe_pop(self.run_command))
 
     def periodic_update_params(self):
         async def inner():
