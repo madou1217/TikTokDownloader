@@ -429,6 +429,12 @@ built with gcc 14.2.0 (crosstool-NG 1.27.0.18_7458341)
 <td align="center">无</td>
 </tr>
 <tr>
+<td align="center">upload</td>
+<td align="center">dict</td>
+<td align="center">上传配置对象，支持 WebDAV 上传、断点续传与去重记录；详见下方 <code>Uploader 配置（upload）</code> 小节</td>
+<td align="center">关闭</td>
+</tr>
+<tr>
 <td align="center">douyin_platform</td>
 <td align="center">bool</td>
 <td align="center"><a href="#supplement"><sup>5</sup></a>是否启用抖音平台功能</td>
@@ -454,6 +460,109 @@ built with gcc 14.2.0 (crosstool-NG 1.27.0.18_7458341)
 </tr>
 </tbody>
 </table>
+<h2>Uploader 配置（upload）</h2>
+<p><code>upload</code> 是一个对象，负责定义下载后上传到外部存储（如 WebDAV / NAS）的行为。</p>
+<p>上传流程默认支持断点续传与去重记录：同一个文件哈希已成功上传到同一路径时会自动跳过重复上传。</p>
+<table>
+<thead>
+<tr>
+<th align="center">参数</th>
+<th align="center">类型</th>
+<th align="center">说明</th>
+<th align="center">默认</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td align="center">upload.enabled</td>
+<td align="center">bool</td>
+<td align="center">是否启用上传功能总开关</td>
+<td align="center">false</td>
+</tr>
+<tr>
+<td align="center">upload.delete_local_after_upload</td>
+<td align="center">bool</td>
+<td align="center">上传成功后是否删除本地资源文件；仅在 <code>upload.enabled=true</code> 且上传成功时生效</td>
+<td align="center">false</td>
+</tr>
+<tr>
+<td align="center">upload.video_suffixes</td>
+<td align="center">list[str]</td>
+<td align="center">允许上传的文件后缀白名单（不区分大小写）</td>
+<td align="center">mp4, mov</td>
+</tr>
+<tr>
+<td align="center">upload.webdav.enabled</td>
+<td align="center">bool</td>
+<td align="center">是否启用 WebDAV 上传通道</td>
+<td align="center">false</td>
+</tr>
+<tr>
+<td align="center">upload.webdav.base_url</td>
+<td align="center">str</td>
+<td align="center">WebDAV 对外可访问地址（上传写入地址）</td>
+<td align="center">空</td>
+</tr>
+<tr>
+<td align="center">upload.webdav.origin_base_url</td>
+<td align="center">str</td>
+<td align="center">局域网原始地址（客户端局域网直连优先使用）；为空时自动等于 <code>base_url</code></td>
+<td align="center">空</td>
+</tr>
+<tr>
+<td align="center">upload.webdav.username</td>
+<td align="center">str</td>
+<td align="center">WebDAV 用户名</td>
+<td align="center">空</td>
+</tr>
+<tr>
+<td align="center">upload.webdav.password</td>
+<td align="center">str</td>
+<td align="center">WebDAV 密码</td>
+<td align="center">空</td>
+</tr>
+<tr>
+<td align="center">upload.webdav.remote_root</td>
+<td align="center">str</td>
+<td align="center">远端根目录，上传路径会拼接在该目录下</td>
+<td align="center">/DouK-Downloader</td>
+</tr>
+<tr>
+<td align="center">upload.webdav.timeout</td>
+<td align="center">int</td>
+<td align="center">WebDAV 请求超时时间（秒）</td>
+<td align="center">30</td>
+</tr>
+<tr>
+<td align="center">upload.webdav.verify_ssl</td>
+<td align="center">bool</td>
+<td align="center">是否校验 SSL 证书；自签名证书环境可设置为 <code>false</code></td>
+<td align="center">true</td>
+</tr>
+</tbody>
+</table>
+<h3>Uploader 行为说明（重要）</h3>
+<ol>
+<li><code>upload.enabled=false</code> 时，不会上传，也不会删除任何本地资源。</li>
+<li><code>upload.enabled=true</code> 且 <code>upload.delete_local_after_upload=false</code> 时，会上传但保留本地资源。</li>
+<li>仅当 <code>upload.enabled=true</code> 且 <code>upload.delete_local_after_upload=true</code> 且上传成功时，才会删除本地资源。</li>
+<li><code>upload.webdav.origin_base_url</code> 用于客户端局域网直连地址；如果未配置，会自动回退为 <code>upload.webdav.base_url</code>。</li>
+<li>上传去重依据为文件哈希 + 上传通道 + 目标路径，已成功记录的目标不会重复上传。</li>
+</ol>
+<h3>上传路径与文件命名规则</h3>
+<p>下载后上传会按以下结构组织远端路径（WebDAV/NAS）：</p>
+<p><code>remote_root / 作者名(清洗后) / 年份 / 文件名</code></p>
+<ol>
+<li>普通视频文件名：<code>视频标题 + 发布日期(YYYY-MM-DD)</code>。</li>
+<li>直播回放文件名：<code>直播-标题-YYYY-MM-DD_HH-MM-SS</code>（带直播标识）。</li>
+<li>作者名会自动去除 emoji、空格及非法字符，避免远端路径异常。</li>
+</ol>
+<h3>直播录制与自动下载补充</h3>
+<ol>
+<li>直播录制目录固定为 <code>Volume/LiveRecord</code>（该目录不提供 settings 参数开关）。</li>
+<li>直播录制结束后会写入作品记录（<code>work_type=live</code>），可在客户端列表、筛选和播放列表中使用。</li>
+<li>“自动下载”开关是用户级配置项（管理端用户列表/详情），不在 <code>settings.json</code> 中维护。</li>
+</ol>
 <div id="supplement">
 <p><strong>补充说明：</strong></p>
 <ol>
@@ -536,6 +645,24 @@ built with gcc 14.2.0 (crosstool-NG 1.27.0.18_7458341)
   "run_command": "6 2 1",
   "ffmpeg": "C:\\DouK-Downloader\\ffmpeg.exe",
   "live_qualities": "1",
+  "upload": {
+    "enabled": true,
+    "delete_local_after_upload": false,
+    "video_suffixes": [
+      "mp4",
+      "mov"
+    ],
+    "webdav": {
+      "enabled": true,
+      "base_url": "https://nas.example.com/public/抖音学习资料",
+      "origin_base_url": "https://192.168.1.10:5006/public/抖音学习资料",
+      "username": "webdav_user",
+      "password": "webdav_password",
+      "remote_root": "/Douyin/Downloader",
+      "timeout": 30,
+      "verify_ssl": false
+    }
+  },
   "douyin_platform": true,
   "tiktok_platform": true,
   "browser_info": {

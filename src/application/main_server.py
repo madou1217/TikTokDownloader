@@ -1,5 +1,7 @@
 import asyncio
 from asyncio.subprocess import PIPE
+from ipaddress import ip_address
+from mimetypes import guess_type
 import re
 from contextlib import suppress
 from datetime import datetime, time, timedelta
@@ -13,7 +15,7 @@ import time as time_module
 from urllib.parse import quote, urljoin, urlparse, urlencode
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pyperclip import paste
 from uvicorn import Config, Server
@@ -68,7 +70,7 @@ from ..models import (
     VideoSearch,
 )
 from ..interface import Account as AccountFetcher, Detail as DetailFetcher
-from ..module import Cookie
+from ..module import Cookie, DouyinLiveRecorder
 from ..tools import Browser, cookie_dict_to_str
 from ..translation import _
 from .main_terminal import TikTok
@@ -93,6 +95,7 @@ class APIServer(TikTok):
     DEFAULT_SCHEDULE_TIMES = ("09:30", "15:30", "21:00")
     REFRESH_QUEUE_SIZE = 200
     REFRESH_CONCURRENCY = 2
+    AUTO_PENDING_SCAN_LIMIT = 300
     MEDIA_PROBE_TIMEOUT = 8
     MEDIA_PROBE_CONCURRENCY = 2
     USER_ID_PATTERN = re.compile(r"^MS4wL[0-9A-Za-z_-]+$")
@@ -102,6 +105,8 @@ class APIServer(TikTok):
     STREAM_CACHE_TTL_M3U8 = 5
     STREAM_CACHE_TTL_SEGMENT = 12
     STREAM_LIVE_PREFIX_TTL = 90
+    CLIENT_FEED_WORK_TYPES = ("video", "note", "live")
+    DOWNLOADABLE_WORK_TYPES = ("video", "note")
 
     def __init__(
         self,
@@ -126,6 +131,10 @@ class APIServer(TikTok):
         self._feed_subscribers = set()
         self._stream_cache = {}
         self._live_stream_prefixes = {}
+        self._live_monitor_task = None
+        self._live_refreshing = set()
+        self._auto_downloading = set()
+        self.live_recorder = DouyinLiveRecorder(parameter, database)
 
     @staticmethod
     def _hash_cookie(cookie: str) -> str:
@@ -788,6 +797,14 @@ class APIServer(TikTok):
             play_count=int(row.get("play_count") or 0),
             width=int(row.get("width") or 0),
             height=int(row.get("height") or 0),
+            upload_status=row.get("upload_status") or "pending",
+            upload_provider=row.get("upload_provider") or "",
+            upload_destination=row.get("upload_destination") or "",
+            upload_origin_destination=row.get("upload_origin_destination") or "",
+            upload_message=row.get("upload_message") or "",
+            local_path=row.get("local_path") or "",
+            downloaded_at=row.get("downloaded_at") or "",
+            uploaded_at=row.get("uploaded_at") or "",
         )
 
     @staticmethod
@@ -798,6 +815,29 @@ class APIServer(TikTok):
             return int(datetime.strptime(value, "%Y-%m-%d %H:%M:%S").timestamp())
         except ValueError:
             return 0
+
+    @staticmethod
+    def _resolve_client_ip(request: Request | None) -> str:
+        if not request:
+            return ""
+        forwarded = str(request.headers.get("x-forwarded-for", "") or "").strip()
+        if forwarded:
+            first = forwarded.split(",")[0].strip()
+            if first:
+                return first
+        if not request.client:
+            return ""
+        return str(request.client.host or "").strip()
+
+    @staticmethod
+    def _is_lan_ip(value: str) -> bool:
+        if not value:
+            return False
+        try:
+            ip = ip_address(value)
+        except ValueError:
+            return False
+        return bool(ip.is_private or ip.is_loopback or ip.is_link_local)
 
     @staticmethod
     def _build_live_url(web_rid: str, room_id: str) -> str:
@@ -826,12 +866,17 @@ class APIServer(TikTok):
         create_ts = int(row.get("create_ts") or 0)
         aweme_id = row.get("aweme_id", "")
         work_type = row.get("work_type") or "video"
-        if work_type == "note":
+        if work_type == "live":
+            feed_type = "live_record"
+            share_url = ""
+        elif work_type == "note":
+            feed_type = "note"
             share_url = f"https://www.douyin.com/note/{aweme_id}" if aweme_id else ""
         else:
+            feed_type = "video"
             share_url = f"https://www.douyin.com/video/{aweme_id}" if aweme_id else ""
         item = DouyinClientFeedItem(
-            type=work_type,
+            type=feed_type,
             sec_user_id=row.get("sec_user_id") or "",
             uid=row.get("uid") or "",
             nickname=row.get("nickname") or "",
@@ -971,6 +1016,163 @@ class APIServer(TikTok):
         if width and height:
             return width, height
         return cls._extract_image_size(detail)
+
+    @staticmethod
+    def _normalize_detail_url(value: str) -> str:
+        return str(value or "").strip()
+
+    def _upload_channel_enabled(self) -> bool:
+        upload = self.parameter.upload if isinstance(self.parameter.upload, dict) else {}
+        if not upload.get("enabled"):
+            return False
+        webdav = upload.get("webdav", {})
+        if not isinstance(webdav, dict):
+            return False
+        return bool(webdav.get("enabled") and str(webdav.get("base_url", "")).strip())
+
+    @staticmethod
+    def _build_local_stream_source_url(aweme_id: str) -> str:
+        return f"/client/douyin/local-stream?aweme_id={quote(str(aweme_id or ''), safe='')}"
+
+    @staticmethod
+    def _is_path_within(path: Path, parent: Path) -> bool:
+        try:
+            path.relative_to(parent)
+            return True
+        except Exception:
+            return False
+
+    def _resolve_local_cache_path(self, local_path: str) -> Path | None:
+        text = str(local_path or "").strip()
+        if not text:
+            return None
+        root = self.parameter.root.expanduser().resolve()
+        project_root_raw = getattr(self.parameter, "ROOT", root)
+        project_root = (
+            project_root_raw.expanduser().resolve()
+            if isinstance(project_root_raw, Path)
+            else root
+        )
+        volume_root = (
+            root if root.name.lower() == "volume" else project_root.joinpath("Volume")
+        )
+        allow_roots = [root, project_root, volume_root]
+        if root.name.lower() == "volume":
+            allow_roots.append(root.parent)
+
+        normalized = text.replace("\\", "/")
+        candidates: list[Path] = []
+        raw = Path(text).expanduser()
+        if raw.is_absolute():
+            candidates.append(raw)
+        else:
+            candidates.append(root.joinpath(raw))
+            candidates.append(project_root.joinpath(raw))
+
+        def append_relative(base: Path, relative_text: str) -> None:
+            relative_text = relative_text.strip("/")
+            if not relative_text:
+                return
+            candidates.append(base.joinpath(Path(relative_text)))
+
+        if normalized.startswith("/app/Volume/"):
+            relative = normalized.split("/app/Volume/", 1)[1]
+            append_relative(volume_root, relative)
+            append_relative(root, relative)
+        elif normalized.startswith("/app/"):
+            relative = normalized.split("/app/", 1)[1]
+            append_relative(project_root, relative)
+            append_relative(root, relative)
+
+        if "/Volume/" in normalized:
+            relative = normalized.split("/Volume/", 1)[1]
+            append_relative(volume_root, relative)
+
+        seen: set[str] = set()
+        for candidate in candidates:
+            try:
+                target = candidate.resolve()
+            except Exception:
+                continue
+            key = str(target)
+            if key in seen:
+                continue
+            seen.add(key)
+            if not target.is_file():
+                continue
+            if any(self._is_path_within(target, base) for base in allow_roots):
+                return target
+        return None
+
+    async def _resolve_work_local_file(self, aweme_id: str, work_row: dict) -> Path | None:
+        raw_local_path = str((work_row or {}).get("local_path", "")).strip()
+        local_file = self._resolve_local_cache_path(raw_local_path)
+        if local_file:
+            return local_file
+        work_type = str((work_row or {}).get("work_type", "")).strip().lower()
+        is_live = work_type == "live" or str(aweme_id).startswith("live_")
+        if not is_live:
+            return None
+        fallback_path = await self.database.get_latest_douyin_live_record_output(aweme_id)
+        if not fallback_path:
+            return None
+        local_file = self._resolve_local_cache_path(fallback_path)
+        if not local_file:
+            return None
+        work_row["local_path"] = str(local_file)
+        await self.database.set_douyin_work_local_path(aweme_id, str(local_file))
+        return local_file
+
+    @classmethod
+    def _build_detail_video_sources(
+        cls,
+        douyin_url: str,
+        uploaded_url: str,
+        uploaded_origin_url: str,
+        local_cache_url: str,
+        prefer_origin: bool,
+        include_upload_sources: bool = True,
+    ) -> tuple[list[dict], str]:
+        sources: list[dict] = []
+        seen: set[str] = set()
+
+        def add_source(source_id: str, label: str, url: str) -> None:
+            target = cls._normalize_detail_url(url)
+            if not target:
+                return
+            key = target.lower()
+            if key in seen:
+                return
+            seen.add(key)
+            source = {
+                "id": source_id,
+                "label": label,
+                "url": target,
+            }
+            if source_id == "nas_origin":
+                source["need_auth"] = True
+            sources.append(source)
+
+        add_source("local_cache", "本地缓存", local_cache_url)
+
+        if include_upload_sources:
+            upload_candidates = (
+                (
+                    ("nas_origin", "NAS(局域网)", uploaded_origin_url),
+                    ("nas_proxy", "NAS(代理)", uploaded_url),
+                )
+                if prefer_origin
+                else (
+                    ("nas_proxy", "NAS(代理)", uploaded_url),
+                    ("nas_origin", "NAS(局域网)", uploaded_origin_url),
+                )
+            )
+            for source_id, label, url in upload_candidates:
+                add_source(source_id, label, url)
+
+        add_source("douyin", "抖音", douyin_url)
+        default_source = sources[0]["id"] if sources else ""
+        return sources, default_source
 
     @staticmethod
     def _is_m3u8_resource(url: str, content_type: str = "") -> bool:
@@ -1164,6 +1366,18 @@ class APIServer(TikTok):
             return ""
         return "\r\n".join(lines) + "\r\n"
 
+    @staticmethod
+    def _parse_probe_size(stdout: bytes | str) -> tuple[int, int]:
+        text = (
+            stdout.decode("utf-8", errors="ignore")
+            if isinstance(stdout, bytes)
+            else str(stdout or "")
+        ).strip()
+        match = re.search(r"(\d+)x(\d+)", text)
+        if not match:
+            return 0, 0
+        return int(match.group(1)), int(match.group(2))
+
     async def _probe_media_size(self, url: str) -> tuple[int, int]:
         if not url:
             return 0, 0
@@ -1210,11 +1424,45 @@ class APIServer(TikTok):
             with suppress(Exception):
                 await process.wait()
             return 0, 0
-        output = stdout.decode("utf-8", errors="ignore").strip()
-        match = re.search(r"(\d+)x(\d+)", output)
-        if not match:
+        return self._parse_probe_size(stdout)
+
+    async def _probe_local_media_size(self, file_path: Path) -> tuple[int, int]:
+        if not isinstance(file_path, Path) or not file_path.is_file():
             return 0, 0
-        return int(match.group(1)), int(match.group(2))
+        ffprobe_path = which("ffprobe")
+        if not ffprobe_path:
+            return 0, 0
+        command = [
+            ffprobe_path,
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0:s=x",
+            str(file_path),
+        ]
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=PIPE,
+                stderr=PIPE,
+            )
+        except OSError:
+            return 0, 0
+        try:
+            stdout, _ = await asyncio.wait_for(
+                process.communicate(),
+                timeout=self.MEDIA_PROBE_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            process.kill()
+            with suppress(Exception):
+                await process.wait()
+            return 0, 0
+        return self._parse_probe_size(stdout)
 
     @staticmethod
     def _pick_live_stream_url(room: dict) -> str:
@@ -1321,11 +1569,15 @@ class APIServer(TikTok):
         today = self._today_str()
         sec_user_id = sec_user_id.strip()
         if sec_user_id:
-            video_total = await self.database.count_douyin_user_works(sec_user_id)
+            video_total = await self.database.count_douyin_user_works(
+                sec_user_id,
+                work_types=self.CLIENT_FEED_WORK_TYPES,
+            )
             video_rows = await self.database.list_douyin_user_works(
                 sec_user_id,
                 page,
                 page_size,
+                work_types=self.CLIENT_FEED_WORK_TYPES,
             )
             items = [self._build_work_feed_item(row)[1] for row in video_rows]
             return DouyinClientFeedPage(
@@ -1334,13 +1586,17 @@ class APIServer(TikTok):
                 live_total=0,
                 items=items,
             )
-        video_total = await self.database.count_douyin_works_today(today)
+        video_total = await self.database.count_douyin_works_today(
+            today,
+            work_types=self.CLIENT_FEED_WORK_TYPES,
+        )
         live_total = await self.database.count_douyin_live_today(today)
         fetch_size = page * page_size
         video_rows = await self.database.list_douyin_works_today(
             today,
             1,
             fetch_size,
+            work_types=self.CLIENT_FEED_WORK_TYPES,
         )
         live_rows = await self.database.list_douyin_live_today(
             today,
@@ -1685,6 +1941,153 @@ class APIServer(TikTok):
             "total": len(today_works),
         }
 
+    async def _list_user_pending_auto_download_works(
+        self,
+        sec_user_id: str,
+    ) -> list[dict]:
+        rows = await self.database.list_douyin_user_pending_works(
+            sec_user_id,
+            limit=self.AUTO_PENDING_SCAN_LIMIT,
+        )
+        works = []
+        for row in rows:
+            aweme_id = str(row.get("aweme_id", "")).strip()
+            if not aweme_id:
+                continue
+            work_type = row.get("work_type") or "video"
+            if work_type not in self.DOWNLOADABLE_WORK_TYPES:
+                continue
+            works.append(
+                {
+                    "aweme_id": aweme_id,
+                    "type": work_type,
+                }
+            )
+        return works
+
+    async def _collect_auto_download_works(
+        self,
+        sec_user_id: str,
+        latest_items: list[dict] | None = None,
+    ) -> list[dict]:
+        candidates: dict[str, dict] = {}
+
+        for item in latest_items or []:
+            aweme_id = str(item.get("aweme_id", "")).strip()
+            if not aweme_id:
+                continue
+            work_type = item.get("type") or item.get("work_type") or "video"
+            if work_type not in self.DOWNLOADABLE_WORK_TYPES:
+                continue
+            candidates[aweme_id] = {
+                "aweme_id": aweme_id,
+                "type": work_type,
+            }
+
+        pending = await self._list_user_pending_auto_download_works(sec_user_id)
+        for item in pending:
+            aweme_id = str(item.get("aweme_id", "")).strip()
+            if not aweme_id:
+                continue
+            if aweme_id in candidates:
+                continue
+            candidates[aweme_id] = item
+
+        return list(candidates.values())
+
+    async def _auto_download_user_works(self, sec_user_id: str, works: list[dict]) -> None:
+        if not sec_user_id or not works:
+            return
+        target_ids = []
+        status_map: dict[str, str] = {}
+        for item in works:
+            aweme_id = str(item.get("aweme_id", "")).strip()
+            if not aweme_id:
+                continue
+            work_type = item.get("type") or item.get("work_type") or "video"
+            if work_type not in self.DOWNLOADABLE_WORK_TYPES:
+                continue
+            row = await self.database.get_douyin_work(aweme_id)
+            current_status = (row.get("upload_status") or "").lower()
+            status_map[aweme_id] = current_status
+            if current_status == "uploaded":
+                continue
+            if aweme_id in self._auto_downloading:
+                continue
+            self._auto_downloading.add(aweme_id)
+            target_ids.append(aweme_id)
+
+        if not target_ids:
+            return
+        try:
+            for aweme_id in target_ids:
+                if status_map.get(aweme_id) not in (
+                    "downloading",
+                    "downloaded",
+                    "uploading",
+                ):
+                    await self.database.update_douyin_work_upload(
+                        aweme_id=aweme_id,
+                        status="pending",
+                        message="",
+                    )
+
+            details = []
+            for aweme_id in target_ids:
+                data, cookie_id = await self._fetch_douyin_detail_with_pool(aweme_id)
+                if cookie_id and data:
+                    await self.database.touch_douyin_cookie(cookie_id)
+                if not data:
+                    await self.database.update_douyin_work_upload(
+                        aweme_id=aweme_id,
+                        status="failed",
+                        message="作品详情获取失败",
+                    )
+                    continue
+                details.append(data)
+            if not details:
+                return
+
+            root, params, logger = self.record.run(self.parameter)
+            async with logger(root, console=self.console, **params) as record:
+                detail_data = await self.extractor.run(
+                    details,
+                    record,
+                    tiktok=False,
+                )
+            if detail_data:
+                await self.downloader.run(detail_data, "detail", tiktok=False)
+        finally:
+            for aweme_id in target_ids:
+                self._auto_downloading.discard(aweme_id)
+
+    async def _run_user_auto_update_now(self, sec_user_id: str) -> None:
+        if not sec_user_id:
+            return
+        latest = await self._refresh_user_latest(sec_user_id)
+        candidates = await self._collect_auto_download_works(
+            sec_user_id,
+            latest.get("items", []),
+        )
+        await self._auto_download_user_works(
+            sec_user_id,
+            candidates,
+        )
+        await self._refresh_user_live(sec_user_id)
+
+    async def _run_user_auto_update_now_background(self, sec_user_id: str) -> None:
+        try:
+            await self._run_user_auto_update_now(sec_user_id)
+        except Exception:
+            self.logger.error(_("立即自动下载任务执行异常"), exc_info=True)
+
+    def _trigger_user_auto_update_now(self, sec_user_id: str) -> None:
+        if not sec_user_id:
+            return
+        asyncio.create_task(
+            self._run_user_auto_update_now_background(sec_user_id),
+        )
+
     def _trigger_refresh_latest(self, sec_user_id: str) -> None:
         if not sec_user_id:
             return
@@ -1695,6 +2098,18 @@ class APIServer(TikTok):
             self._refresh_pending.add(sec_user_id)
         except asyncio.QueueFull:
             self.logger.warning(_("自动拉取队列已满，忽略请求"))
+
+    async def _bootstrap_auto_update_users(self) -> None:
+        try:
+            users = await self.database.list_douyin_users_auto_update()
+        except Exception:
+            self.logger.error(_("初始化自动下载用户任务失败"), exc_info=True)
+            return
+        for row in users:
+            sec_user_id = str(row.get("sec_user_id", "")).strip()
+            if not sec_user_id:
+                continue
+            self._trigger_user_auto_update_now(sec_user_id)
 
     async def _refresh_user_live_background(self, sec_user_id: str) -> None:
         if not sec_user_id:
@@ -1721,39 +2136,57 @@ class APIServer(TikTok):
                 self._refresh_queue.task_done()
 
     async def _refresh_user_live(self, sec_user_id: str) -> dict:
+        if not sec_user_id:
+            return {}
+        if sec_user_id in self._live_refreshing:
+            return self._get_cached_live_info(sec_user_id) or {}
+        self._live_refreshing.add(sec_user_id)
         extract = AccountLive(
             sec_user_id=sec_user_id,
             dump_html=False,
         )
-        live_info = await self._build_live_info(extract)
-        is_live = bool(live_info and live_info.get("live_status"))
-        await self.database.update_douyin_user_live(sec_user_id, is_live)
-        if live_info and is_live:
-            room = live_info.get("room") if isinstance(live_info, dict) else None
-            if isinstance(room, dict):
-                width = int(room.get("width") or 0)
-                height = int(room.get("height") or 0)
-                if not width or not height:
-                    stream_url = self._pick_live_stream_url(room)
-                    if stream_url:
-                        width, height = await self._probe_media_size(stream_url)
-                if width and height:
-                    room["width"] = width
-                    room["height"] = height
-                    await self.database.update_douyin_user_live_size(
-                        sec_user_id, width, height
-                    )
-            self._notify_feed_update(
-                "live",
-                {
-                    "sec_user_id": sec_user_id,
-                    "web_rid": live_info.get("web_rid") if isinstance(live_info, dict) else "",
-                    "room_id": live_info.get("room_id") if isinstance(live_info, dict) else "",
-                },
-            )
-        if live_info:
-            self._cache_live_info(sec_user_id, live_info)
-        return live_info or {}
+        try:
+            live_info = await self._build_live_info(extract)
+            is_live = bool(live_info and live_info.get("live_status"))
+            await self.database.update_douyin_user_live(sec_user_id, is_live)
+            if live_info and is_live:
+                room = live_info.get("room") if isinstance(live_info, dict) else None
+                if isinstance(room, dict):
+                    width = int(room.get("width") or 0)
+                    height = int(room.get("height") or 0)
+                    if not width or not height:
+                        stream_url = self._pick_live_stream_url(room)
+                        if stream_url:
+                            width, height = await self._probe_media_size(stream_url)
+                    if width and height:
+                        room["width"] = width
+                        room["height"] = height
+                        await self.database.update_douyin_user_live_size(
+                            sec_user_id, width, height
+                        )
+                self._notify_feed_update(
+                    "live",
+                    {
+                        "sec_user_id": sec_user_id,
+                        "web_rid": live_info.get("web_rid")
+                        if isinstance(live_info, dict)
+                        else "",
+                        "room_id": live_info.get("room_id")
+                        if isinstance(live_info, dict)
+                        else "",
+                    },
+                )
+            if live_info:
+                self._cache_live_info(sec_user_id, live_info)
+
+            if self.live_recorder.enabled:
+                if live_info and is_live and isinstance(live_info.get("room"), dict):
+                    await self.live_recorder.ensure_recording(sec_user_id, live_info)
+                else:
+                    await self.live_recorder.mark_offline(sec_user_id)
+            return live_info or {}
+        finally:
+            self._live_refreshing.discard(sec_user_id)
 
     async def _schedule_tick(self) -> None:
         setting = self._resolve_schedule_setting(
@@ -1776,8 +2209,17 @@ class APIServer(TikTok):
             end = user.get("update_window_end", "")
             if not self._within_window(start, end, now.time()):
                 continue
-            await self._refresh_user_latest(user.get("sec_user_id", ""))
-            await self._refresh_user_live(user.get("sec_user_id", ""))
+            sec_user_id = user.get("sec_user_id", "")
+            latest = await self._refresh_user_latest(sec_user_id)
+            candidates = await self._collect_auto_download_works(
+                sec_user_id,
+                latest.get("items", []),
+            )
+            await self._auto_download_user_works(
+                sec_user_id,
+                candidates,
+            )
+            await self._refresh_user_live(sec_user_id)
 
     async def _run_schedule_loop(self) -> None:
         while True:
@@ -1786,6 +2228,34 @@ class APIServer(TikTok):
                 await self._schedule_tick()
             except Exception:
                 self.logger.error(_("计划任务执行异常"))
+
+    async def _live_monitor_tick(self) -> None:
+        if not self.live_recorder.enabled:
+            return
+        users = await self.database.list_douyin_users_auto_update()
+        now = datetime.now().time()
+        active_users = set()
+        for user in users:
+            sec_user_id = str(user.get("sec_user_id", "")).strip()
+            if not sec_user_id:
+                continue
+            start = user.get("update_window_start", "")
+            end = user.get("update_window_end", "")
+            if not self._within_window(start, end, now):
+                continue
+            active_users.add(sec_user_id)
+            await self._refresh_user_live(sec_user_id)
+        await self.live_recorder.prune_sessions(active_users)
+
+    async def _run_live_monitor_loop(self) -> None:
+        if not self.live_recorder.enabled:
+            return
+        while True:
+            await asyncio.sleep(self.live_recorder.monitor_interval)
+            try:
+                await self._live_monitor_tick()
+            except Exception:
+                self.logger.error(_("直播监听任务执行异常"), exc_info=True)
 
     async def handle_redirect(self, text: str, proxy: str = None) -> str:
         return await self.links.run(
@@ -1844,6 +2314,7 @@ class APIServer(TikTok):
 
         @self.server.on_event("startup")
         async def startup_schedule():
+            await self.database.mark_running_live_records_interrupted()
             if not self._schedule_task:
                 self._schedule_task = asyncio.create_task(self._run_schedule_loop())
             if not self._refresh_workers:
@@ -1851,6 +2322,12 @@ class APIServer(TikTok):
                     asyncio.create_task(self._refresh_latest_worker(index))
                     for index in range(self.REFRESH_CONCURRENCY)
                 ]
+            if self.live_recorder.enabled and not self._live_monitor_task:
+                self._live_monitor_task = asyncio.create_task(
+                    self._run_live_monitor_loop()
+                )
+                await self._live_monitor_tick()
+            asyncio.create_task(self._bootstrap_auto_update_users())
 
         @self.server.on_event("shutdown")
         async def shutdown_schedule():
@@ -1861,6 +2338,10 @@ class APIServer(TikTok):
                 for task in self._refresh_workers:
                     task.cancel()
                 self._refresh_workers = []
+            if self._live_monitor_task:
+                self._live_monitor_task.cancel()
+                self._live_monitor_task = None
+            await self.live_recorder.shutdown()
 
         @self.server.get(
             "/",
@@ -1913,6 +2394,29 @@ class APIServer(TikTok):
                 raise HTTPException(status_code=502, detail=_("图片获取失败"))
             content_type = resp.headers.get("Content-Type") or "image/jpeg"
             return Response(content=resp.content, media_type=content_type)
+
+        @self.server.get(
+            "/client/douyin/local-stream",
+            summary=_("播放本地缓存媒体"),
+            tags=[_("客户端")],
+            response_class=FileResponse,
+        )
+        async def stream_douyin_local_cache_client(
+            aweme_id: str = Query(..., min_length=6),
+        ):
+            aweme_id = str(aweme_id or "").strip()
+            work_row = await self.database.get_douyin_work(aweme_id)
+            if not work_row:
+                raise HTTPException(status_code=404, detail=_("未找到作品记录"))
+            local_file = await self._resolve_work_local_file(aweme_id, work_row)
+            if not local_file:
+                raise HTTPException(status_code=404, detail=_("本地缓存不存在"))
+            media_type = guess_type(local_file.name)[0] or "application/octet-stream"
+            return FileResponse(
+                path=str(local_file),
+                media_type=media_type,
+                filename=local_file.name,
+            )
 
         @self.server.get(
             "/client/douyin/stream",
@@ -2434,6 +2938,10 @@ class APIServer(TikTok):
             row = await self.database.get_douyin_user(sec_user_id)
             if not row:
                 raise HTTPException(status_code=404, detail=_("抖音用户不存在"))
+            if payload.auto_update:
+                # 开启自动下载后立即触发一次扫描与下载，避免必须等待下个计划时间点。
+                self._trigger_user_auto_update_now(sec_user_id)
+            row["next_auto_update_at"] = await self._compute_next_auto_update_at(row)
             return DouyinUser(**self._normalize_user_row(row))
 
         @self.server.get(
@@ -2528,6 +3036,9 @@ class APIServer(TikTok):
             sec_user_id: str, token: str = Depends(token_dependency)
         ):
             result = await self._refresh_user_latest(sec_user_id)
+            row = await self.database.get_douyin_user(sec_user_id)
+            if row and bool(row.get("auto_update", 0)):
+                self._trigger_user_auto_update_now(sec_user_id)
             items = [DouyinWork(**i) for i in result.get("items", [])]
             return DouyinDailyWorkPage(total=len(items), items=items)
 
@@ -2878,6 +3389,80 @@ class APIServer(TikTok):
                 params={"playlist_id": playlist_id},
             )
 
+        @self.server.post(
+            "/client/douyin/playlists/{playlist_id}/items/check",
+            summary=_("检查播放列表作品"),
+            tags=[_("客户端")],
+            response_model=DataResponse,
+        )
+        async def check_douyin_playlist_items_client(
+            playlist_id: int,
+            payload: DouyinPlaylistImport,
+        ):
+            record = await self.database.get_douyin_playlist(playlist_id)
+            if not record:
+                raise HTTPException(status_code=404, detail=_("播放列表不存在"))
+            exists = await self.database.list_douyin_playlist_item_ids(
+                playlist_id,
+                payload.aweme_ids,
+            )
+            return DataResponse(
+                message=_("查询成功"),
+                data={"exists": exists},
+                params={"playlist_id": playlist_id},
+            )
+
+        @self.server.post(
+            "/client/douyin/playlists/{playlist_id}/items/remove",
+            summary=_("移除播放列表作品"),
+            tags=[_("客户端")],
+            response_model=DataResponse,
+        )
+        async def remove_douyin_playlist_items_client(
+            playlist_id: int,
+            payload: DouyinPlaylistImport,
+        ):
+            record = await self.database.get_douyin_playlist(playlist_id)
+            if not record:
+                raise HTTPException(status_code=404, detail=_("播放列表不存在"))
+            removed = await self.database.delete_douyin_playlist_items(
+                playlist_id,
+                payload.aweme_ids,
+            )
+            return DataResponse(
+                message=_("移除成功"),
+                data={"playlist_id": playlist_id, "removed": removed},
+                params={"playlist_id": playlist_id},
+            )
+
+        @self.server.get(
+            "/client/network",
+            summary=_("获取客户端网络信息"),
+            tags=[_("客户端")],
+            response_model=DataResponse,
+        )
+        async def get_client_network_info(request: Request):
+            client_ip = self._resolve_client_ip(request)
+            webdav_config = (
+                self.parameter.upload.get("webdav", {})
+                if isinstance(self.parameter.upload, dict)
+                else {}
+            )
+            origin_base_url = str(webdav_config.get("origin_base_url", "")).strip()
+            base_url = str(webdav_config.get("base_url", "")).strip()
+            if not origin_base_url:
+                origin_base_url = base_url
+            return DataResponse(
+                message=_("请求成功"),
+                data={
+                    "ip": client_ip,
+                    "is_lan": self._is_lan_ip(client_ip),
+                    "webdav_base_url": base_url,
+                    "webdav_origin_base_url": origin_base_url,
+                },
+                params=None,
+            )
+
         @self.server.get(
             "/client/douyin/detail",
             summary=_("获取单个作品播放信息"),
@@ -2885,42 +3470,129 @@ class APIServer(TikTok):
             response_model=DataResponse,
         )
         async def get_client_detail(
+            request: Request,
             aweme_id: str = Query(..., min_length=6),
         ):
-            data, cookie_id = await self._fetch_douyin_detail_with_pool(aweme_id)
-            if cookie_id and data:
-                await self.database.touch_douyin_cookie(cookie_id)
-            if not data:
+            aweme_id = str(aweme_id or "").strip()
+            work_row = await self.database.get_douyin_work(aweme_id)
+            row_work_type = str(work_row.get("work_type") or "").strip().lower()
+            data = None
+            cookie_id = 0
+            if row_work_type != "live":
+                data, cookie_id = await self._fetch_douyin_detail_with_pool(aweme_id)
+                if cookie_id and data:
+                    await self.database.touch_douyin_cookie(cookie_id)
+            detail = self._unwrap_detail_data(data) if data else {}
+            if not detail and not work_row:
                 raise HTTPException(status_code=404, detail=_("未获取到作品信息"))
-            detail = self._unwrap_detail_data(data)
+
             author = detail.get("author") if isinstance(detail, dict) else None
             author = author if isinstance(author, dict) else {}
-            is_note = self._is_note_item(detail)
-            payload = {
-                "aweme_id": aweme_id,
-                "title": detail.get("desc", "") if isinstance(detail, dict) else "",
-                "cover": self._extract_detail_cover(detail),
-                "video_url": self._extract_detail_video_url(detail),
-                "audio_url": self._extract_detail_audio_url(detail) if is_note else "",
-                "type": "note" if is_note else "video",
-                "sec_user_id": author.get("sec_uid")
+            is_note = self._is_note_item(detail) if detail else row_work_type == "note"
+            payload_type = "note" if is_note else "video"
+            raw_video_url = self._extract_detail_video_url(detail) if detail else ""
+            sec_user_id = (
+                author.get("sec_uid")
                 or author.get("secUid")
                 or author.get("sec_user_id")
-                or "",
-                "nickname": author.get("nickname", ""),
+                or work_row.get("sec_user_id", "")
+            )
+            user_row = (
+                await self.database.get_douyin_user(sec_user_id)
+                if sec_user_id and not author.get("nickname")
+                else {}
+            )
+            local_file = await self._resolve_work_local_file(aweme_id, work_row)
+            local_cache_url = (
+                self._build_local_stream_source_url(aweme_id) if local_file else ""
+            )
+            upload_enabled = self._upload_channel_enabled()
+
+            payload = {
+                "aweme_id": aweme_id,
+                "title": (
+                    detail.get("desc", "")
+                    if isinstance(detail, dict)
+                    else work_row.get("desc", "") or aweme_id
+                ),
+                "cover": (
+                    self._extract_detail_cover(detail)
+                    if detail
+                    else str(work_row.get("cover", ""))
+                ),
+                "video_url": raw_video_url,
+                "audio_url": self._extract_detail_audio_url(detail) if is_note else "",
+                "type": payload_type,
+                "sec_user_id": sec_user_id,
+                "nickname": author.get("nickname")
+                or user_row.get("nickname", "")
+                or work_row.get("sec_user_id", ""),
                 "avatar": self._extract_first_url(author.get("avatar_larger"))
                 or self._extract_first_url(author.get("avatar_medium"))
-                or self._extract_first_url(author.get("avatar_thumb")),
+                or self._extract_first_url(author.get("avatar_thumb"))
+                or user_row.get("avatar", ""),
+                "video_urls": [],
+                "default_video_source": "",
+                "local_path": str(local_file) if local_file else "",
+                "upload_enabled": upload_enabled,
             }
-            width, height = self._extract_detail_size(detail)
+            if not payload["cover"]:
+                payload["cover"] = user_row.get("cover", "")
+            if not payload["title"] or payload["title"] == aweme_id:
+                payload["title"] = work_row.get("desc", "") or aweme_id
+            if row_work_type == "live" and (
+                not payload["title"] or payload["title"] == aweme_id
+            ):
+                payload["title"] = work_row.get("desc", "") or "直播回放"
+
+            if detail:
+                width, height = self._extract_detail_size(detail)
+            else:
+                width = int(work_row.get("width") or 0)
+                height = int(work_row.get("height") or 0)
             if (not width or not height) and payload.get("type") == "video":
-                video_url = payload.get("video_url") or ""
-                if video_url:
-                    width, height = await self._probe_media_size(video_url)
+                if local_file:
+                    width, height = await self._probe_local_media_size(local_file)
+                if (not width or not height) and row_work_type == "live":
+                    live_width = int(user_row.get("live_width") or 0)
+                    live_height = int(user_row.get("live_height") or 0)
+                    if live_width and live_height:
+                        width, height = live_width, live_height
+                if not width or not height:
+                    video_url = payload.get("video_url") or ""
+                    if video_url:
+                        width, height = await self._probe_media_size(video_url)
             payload["width"] = width
             payload["height"] = height
             if width and height:
                 await self.database.update_douyin_work_size(aweme_id, width, height)
+
+            upload_status = work_row.get("upload_status", "")
+            uploaded_url = str(work_row.get("upload_destination", "")).strip()
+            uploaded_origin_url = str(
+                work_row.get("upload_origin_destination", "")
+            ).strip()
+            payload["upload_status"] = upload_status
+            payload["uploaded_url"] = uploaded_url
+            payload["uploaded_origin_url"] = uploaded_origin_url
+            payload["upload_destination"] = uploaded_url
+            payload["upload_origin_destination"] = uploaded_origin_url
+
+            client_ip = self._resolve_client_ip(request)
+            prefer_origin = self._is_lan_ip(client_ip)
+            if payload.get("type") == "video":
+                video_sources, default_source = self._build_detail_video_sources(
+                    douyin_url=raw_video_url,
+                    uploaded_url=uploaded_url,
+                    uploaded_origin_url=uploaded_origin_url,
+                    local_cache_url=local_cache_url,
+                    prefer_origin=prefer_origin,
+                    include_upload_sources=upload_enabled,
+                )
+                payload["video_urls"] = video_sources
+                payload["default_video_source"] = default_source
+                if video_sources:
+                    payload["video_url"] = video_sources[0].get("url", "")
             return DataResponse(
                 message=_("请求成功"),
                 data=payload,

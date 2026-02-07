@@ -37,7 +37,7 @@ from ..tools import Cleaner, DownloaderError, cookie_dict_to_str, create_client
 from ..translation import _
 
 if TYPE_CHECKING:
-    from ..manager import DownloadRecorder
+    from ..manager import DownloadRecorder, UploadRecorder
     from ..module import Cookie
     from ..tools import ColorfulConsole
     from .settings import Settings
@@ -60,6 +60,21 @@ class Parameter:
     NO_PROXY = {
         "http://": None,
         "https://": None,
+    }
+    UPLOAD_DEFAULT = {
+        "enabled": False,
+        "delete_local_after_upload": False,
+        "video_suffixes": ["mp4", "mov"],
+        "webdav": {
+            "enabled": False,
+            "base_url": "",
+            "origin_base_url": "",
+            "username": "",
+            "password": "",
+            "remote_root": "/DouK-Downloader",
+            "timeout": 30,
+            "verify_ssl": True,
+        },
     }
 
     def __init__(
@@ -101,8 +116,10 @@ class Parameter:
         live_qualities: str,
         ffmpeg: str,
         recorder: "DownloadRecorder",
+        upload_recorder: "UploadRecorder",
         browser_info: dict,
         browser_info_tiktok: dict,
+        upload: dict | None = None,
         timeout=10,
         douyin_platform=True,
         tiktok_platform=True,
@@ -119,6 +136,7 @@ class Parameter:
         self.xg = XGnarly()
         self.console = console
         self.recorder = recorder
+        self.upload_recorder = upload_recorder
         self.preview = BLANK_PREVIEW
         self.ms_token = ""
         self.ms_token_tiktok = ""
@@ -176,6 +194,7 @@ class Parameter:
         self.run_command = self.__check_run_command(run_command)
         self.ffmpeg = self.__generate_ffmpeg_object(ffmpeg)
         self.live_qualities = self.__check_live_qualities(live_qualities)
+        self.upload = self.__check_upload(upload)
         self.douyin_platform = self.check_bool_true(
             douyin_platform,
         )
@@ -243,6 +262,7 @@ class Parameter:
             "run_command": self.__check_run_command,
             "ffmpeg": self.__generate_ffmpeg_object,
             "live_qualities": self.__check_live_qualities,
+            "upload": self.__check_upload,
             "douyin_platform": self.check_bool_true,
             "tiktok_platform": self.check_bool_true,
         }
@@ -262,6 +282,22 @@ class Parameter:
         value: bool,
     ) -> bool:
         return value if isinstance(value, bool) else True
+
+    @staticmethod
+    def _parse_config_bool(value, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if text in {"1", "true", "yes", "y", "on"}:
+                return True
+            if text in {"0", "false", "no", "n", "off", ""}:
+                return False
+        return default
 
     def __check_cookie_tiktok(
         self,
@@ -850,6 +886,7 @@ class Parameter:
             "max_pages": self.max_pages,
             "run_command": " ".join(self.run_command[::-1]),
             "ffmpeg": self.ffmpeg.path or "",
+            "upload": self.upload,
         }
 
     async def set_settings_data(
@@ -961,6 +998,9 @@ class Parameter:
     def set_general_params(self, data: dict[str, Any]) -> None:
         for i, j in data.items():
             if j is not None:
+                if i == "upload":
+                    self.upload = self.__check_upload(j)
+                    continue
                 self.__CHECK[i](j)
 
     async def set_proxy(self, proxy: str | None, proxy_tiktok: str | None):
@@ -1004,6 +1044,67 @@ class Parameter:
     @staticmethod
     def check_str(value: str) -> str:
         return value if isinstance(value, str) else ""
+
+    @classmethod
+    def __merge_dict(cls, base: dict, patch: dict) -> dict:
+        result = base.copy()
+        for key, value in patch.items():
+            if isinstance(value, dict) and isinstance(result.get(key), dict):
+                result[key] = cls.__merge_dict(result[key], value)
+            else:
+                result[key] = value
+        return result
+
+    @classmethod
+    def __check_upload(cls, upload: dict | None) -> dict:
+        config = cls.__merge_dict(
+            cls.UPLOAD_DEFAULT,
+            upload if isinstance(upload, dict) else {},
+        )
+        config["enabled"] = cls._parse_config_bool(
+            config.get("enabled", False),
+            default=False,
+        )
+        config["delete_local_after_upload"] = cls._parse_config_bool(
+            config.get("delete_local_after_upload", False),
+            default=False,
+        )
+        suffixes = config.get("video_suffixes")
+        if not isinstance(suffixes, list):
+            suffixes = cls.UPLOAD_DEFAULT["video_suffixes"]
+        config["video_suffixes"] = [
+            str(i).strip().lower().lstrip(".") for i in suffixes if str(i).strip()
+        ] or cls.UPLOAD_DEFAULT["video_suffixes"]
+
+        webdav = config.get("webdav")
+        if not isinstance(webdav, dict):
+            webdav = {}
+        config["webdav"] = cls.__merge_dict(
+            cls.UPLOAD_DEFAULT["webdav"],
+            webdav,
+        )
+        config["webdav"]["enabled"] = cls._parse_config_bool(
+            config["webdav"].get("enabled", False),
+            default=False,
+        )
+        config["webdav"]["base_url"] = str(config["webdav"].get("base_url", "")).strip()
+        config["webdav"]["origin_base_url"] = str(
+            config["webdav"].get("origin_base_url", "")
+        ).strip()
+        config["webdav"]["username"] = str(config["webdav"].get("username", ""))
+        config["webdav"]["password"] = str(config["webdav"].get("password", ""))
+        config["webdav"]["remote_root"] = str(
+            config["webdav"].get("remote_root", "/DouK-Downloader")
+        )
+        timeout = config["webdav"].get("timeout")
+        config["webdav"]["timeout"] = timeout if isinstance(timeout, int) and timeout > 0 else 30
+        config["webdav"]["verify_ssl"] = cls._parse_config_bool(
+            config["webdav"].get("verify_ssl", True),
+            default=True,
+        )
+        if not config["webdav"]["origin_base_url"]:
+            config["webdav"]["origin_base_url"] = config["webdav"]["base_url"]
+        return config
 
     async def close_client(self) -> None:
         await self.client.aclose()

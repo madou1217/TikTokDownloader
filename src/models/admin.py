@@ -51,6 +51,14 @@ class DouyinWork(BaseModel):
     play_count: int = 0
     width: int = 0
     height: int = 0
+    upload_status: str = "pending"
+    upload_provider: str = ""
+    upload_destination: str = ""
+    upload_origin_destination: str = ""
+    upload_message: str = ""
+    local_path: str = ""
+    downloaded_at: str = ""
+    uploaded_at: str = ""
 
 
 class DouyinWorkPage(BaseModel):

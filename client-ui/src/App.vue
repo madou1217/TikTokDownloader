@@ -177,25 +177,57 @@
             </div>
           </div>
           <div class="player-actions">
-            <button class="ghost" :disabled="!hasPrev" @click="playPrev">
-              上一条
-            </button>
-            <button class="ghost" :disabled="!hasNext" @click="playNext">
-              下一条
-            </button>
-            <div v-if="state.playlists.length" class="playlist-actions">
-              <select
-                v-model="state.playlist.addId"
-                :disabled="!canAddToPlaylist"
-              >
-                <option value="">选择播放列表</option>
-                <option v-for="playlist in state.playlists" :key="playlist.id" :value="String(playlist.id)">
-                  {{ playlist.name }}
-                </option>
-              </select>
-              <button class="ghost" :disabled="!canAddToPlaylist" @click="addToPlaylist">
-                加入播放列表
+            <div class="player-nav-actions">
+              <button class="ghost" :disabled="!hasPrev" @click="playPrev">
+                上一条
               </button>
+              <button class="ghost" :disabled="!hasNext" @click="playNext">
+                下一条
+              </button>
+            </div>
+            <div
+              v-if="showVideoSourceSelector || state.playlists.length"
+              class="player-extra-actions"
+            >
+              <div v-if="showVideoSourceSelector" class="playlist-actions source-actions">
+                <select
+                  v-model="state.player.sourceId"
+                  :disabled="state.player.loading"
+                  @change="handleVideoSourceChange"
+                >
+                  <option
+                    v-for="source in state.player.sources"
+                    :key="source.id"
+                    :value="source.id"
+                  >
+                    {{ source.label }}
+                  </option>
+                </select>
+              </div>
+              <div v-if="state.playlists.length" class="playlist-actions">
+                <select
+                  v-model="state.playlist.addId"
+                  :disabled="state.playlist.loading || !state.playlists.length"
+                  @change="handlePlaylistTargetChange"
+                >
+                  <option value="">选择播放列表</option>
+                  <option
+                    v-for="playlist in state.playlists"
+                    :key="playlist.id"
+                    :value="String(playlist.id)"
+                  >
+                    {{ playlist.name }}
+                  </option>
+                </select>
+                <button
+                  class="ghost playlist-toggle-btn"
+                  :class="{ danger: isInSelectedPlaylist }"
+                  :disabled="playlistActionDisabled"
+                  @click="togglePlaylistItem"
+                >
+                  {{ playlistActionText }}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -352,7 +384,20 @@
             {{ state.player.loadingHint || "正在加载播放源..." }}
           </div>
           <div v-else-if="state.player.error" class="stage-mask error">
-            {{ state.player.error }}
+            <div class="stage-mask-content">
+              <div class="stage-mask-text">{{ state.player.error }}</div>
+              <div
+                v-if="state.player.authRequired && state.player.authUrl"
+                class="stage-mask-actions"
+              >
+                <button class="ghost stage-mask-btn" type="button" @click="openLanAuthPage">
+                  去授权
+                </button>
+                <button class="ghost stage-mask-btn" type="button" @click="confirmLanAuthAndRetry">
+                  已认证，重试
+                </button>
+              </div>
+            </div>
           </div>
           <div v-else-if="state.player.notice" class="stage-mask">
             {{ state.player.notice }}
@@ -413,6 +458,17 @@ const state = reactive({
   playlist: {
     addId: "",
     loading: false,
+    checking: false,
+    checkingKey: "",
+    toggling: false,
+    containsActive: false,
+    membership: {},
+  },
+  network: {
+    ip: "",
+    isLan: false,
+    webdavBaseUrl: "",
+    webdavOriginBaseUrl: "",
   },
   player: {
     type: "",
@@ -436,6 +492,13 @@ const state = reactive({
     suppressAutoplay: false,
     replayReady: false,
     notice: "",
+    sources: [],
+    sourceId: "",
+    sourceLabel: "",
+    sourceNonce: 0,
+    authRequired: false,
+    authUrl: "",
+    authHost: "",
   },
 });
 
@@ -445,7 +508,7 @@ const hasPrev = computed(() => state.items.length > 0 && state.activeIndex > 0);
 const hasNext = computed(
   () => state.items.length > 0 && state.activeIndex < state.items.length - 1
 );
-const canAddToPlaylist = computed(() => {
+const canManagePlaylist = computed(() => {
   const item = activeItem.value;
   return Boolean(
     state.playlist.addId &&
@@ -454,14 +517,44 @@ const canAddToPlaylist = computed(() => {
       item.aweme_id
   );
 });
+const isInSelectedPlaylist = computed(() => Boolean(state.playlist.containsActive));
+const playlistActionText = computed(() =>
+  isInSelectedPlaylist.value ? "移除" : "加入"
+);
+const playlistActionDisabled = computed(() => {
+  if (!canManagePlaylist.value) {
+    return true;
+  }
+  return Boolean(state.playlist.toggling || state.playlist.checking);
+});
+const showVideoSourceSelector = computed(
+  () => state.player.type === "video" && state.player.sources.length > 1
+);
+const selectedUserName = computed(() => {
+  if (!state.filter.secUserId) {
+    return "";
+  }
+  const selectedUser = state.users.find(
+    (item) => item.sec_user_id === state.filter.secUserId
+  );
+  if (selectedUser?.nickname) {
+    return selectedUser.nickname;
+  }
+  if (selectedUser?.uid) {
+    return selectedUser.uid;
+  }
+  const selectedItem = state.items.find(
+    (item) =>
+      item?.sec_user_id === state.filter.secUserId && (item?.nickname || item?.uid)
+  );
+  return selectedItem?.nickname || selectedItem?.uid || "";
+});
 const feedTitle = computed(() => {
   if (state.filter.mode === "user") {
-    if (!state.filter.secUserId) {
+    if (!state.filter.secUserId || !selectedUserName.value) {
       return "用户合集";
     }
-    const namedItem = state.items.find((item) => item?.nickname);
-    const displayName = namedItem?.nickname || state.filter.secUserId;
-    return `${displayName}用户合集`;
+    return `${selectedUserName.value}用户合集`;
   }
   if (state.filter.mode === "playlist") {
     if (!state.filter.playlistId) {
@@ -544,12 +637,19 @@ const prefetchSegmentQueue = new Set();
 const PREFETCH_SEGMENT_BYTES = 512 * 1024;
 const ACTIVE_ITEM_KEY = "douyin-client-active-id";
 const PLAYBACK_STORE_KEY = "douyin-client-playback-positions";
+const LAN_AUTH_HOSTS_KEY = "douyin-client-lan-auth-hosts";
+const VIDEO_SOURCE_PREF_KEY = "douyin-client-video-source-pref";
+const PLAYLIST_TARGET_KEY = "douyin-client-playlist-target";
+const PLAYLIST_MEMBERSHIP_KEY = "douyin-client-playlist-membership";
 const PLAYBACK_STORE_LIMIT = 180;
 const PLAYBACK_PERSIST_INTERVAL = 4;
 const rawApiBase = import.meta.env.VITE_API_BASE || "";
 const apiBase = rawApiBase.endsWith("/") ? rawApiBase.slice(0, -1) : rawApiBase;
 const playbackStore = { loaded: false, items: {} };
 const playbackPersisted = new Map();
+const lanAuthHosts = new Set();
+let preferredVideoSourceId = "";
+let preferredPlaylistId = "";
 let playbackSaveTimer = null;
 const playbackRevision = ref(0);
 let lastPlaybackSecond = -1;
@@ -573,6 +673,290 @@ const buildApiUrl = (path) => {
     return `${apiBase}${path}`;
   }
   return `${apiBase}/${path}`;
+};
+
+const parseUrlSafe = (value) => {
+  if (!value) {
+    return null;
+  }
+  try {
+    return new URL(value);
+  } catch (error) {
+    return null;
+  }
+};
+
+const normalizeUrlOrigin = (value) => {
+  const parsed = parseUrlSafe(value);
+  if (!parsed) {
+    return "";
+  }
+  return String(parsed.origin || "").toLowerCase();
+};
+
+const isPrivateIPv4Host = (host) => {
+  const match = /^(\d{1,3})(?:\.(\d{1,3})){3}$/.test(host);
+  if (!match) {
+    return false;
+  }
+  const parts = host.split(".").map((item) => Number(item));
+  if (parts.some((item) => Number.isNaN(item) || item < 0 || item > 255)) {
+    return false;
+  }
+  if (parts[0] === 10) {
+    return true;
+  }
+  if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) {
+    return true;
+  }
+  if (parts[0] === 192 && parts[1] === 168) {
+    return true;
+  }
+  if (parts[0] === 127) {
+    return true;
+  }
+  if (parts[0] === 169 && parts[1] === 254) {
+    return true;
+  }
+  return false;
+};
+
+const isLikelyLanHost = (host) => {
+  if (!host) {
+    return false;
+  }
+  const value = String(host || "").toLowerCase();
+  if (!value) {
+    return false;
+  }
+  if (value === "localhost" || value.endsWith(".local")) {
+    return true;
+  }
+  return isPrivateIPv4Host(value);
+};
+
+const isLanAuthCandidateUrl = (url) => {
+  const parsed = parseUrlSafe(url);
+  if (!parsed) {
+    return false;
+  }
+  const protocol = String(parsed.protocol || "").toLowerCase();
+  if (protocol !== "http:" && protocol !== "https:") {
+    return false;
+  }
+  const text = String(url || "");
+  if (
+    text.includes("/client/douyin/stream?url=") ||
+    text.includes("/client/douyin/stream-live?url=")
+  ) {
+    return false;
+  }
+  const baseOrigin = normalizeUrlOrigin(
+    state.network.webdavOriginBaseUrl || state.network.webdavBaseUrl || ""
+  );
+  if (baseOrigin && normalizeUrlOrigin(parsed.href) === baseOrigin) {
+    return true;
+  }
+  return Boolean(state.network.isLan && isLikelyLanHost(parsed.hostname || ""));
+};
+
+const lanAuthHostFromUrl = (url) => {
+  if (!isLanAuthCandidateUrl(url)) {
+    return "";
+  }
+  const parsed = parseUrlSafe(url);
+  if (!parsed) {
+    return "";
+  }
+  return String(parsed.host || "").toLowerCase();
+};
+
+const hasLanAuthHost = (url) => {
+  const host = lanAuthHostFromUrl(url);
+  if (!host) {
+    return false;
+  }
+  return lanAuthHosts.has(host);
+};
+
+const persistLanAuthHosts = () => {
+  try {
+    localStorage.setItem(
+      LAN_AUTH_HOSTS_KEY,
+      JSON.stringify(Array.from(lanAuthHosts))
+    );
+  } catch (error) {
+  }
+};
+
+const loadLanAuthHosts = () => {
+  try {
+    const raw = localStorage.getItem(LAN_AUTH_HOSTS_KEY);
+    if (!raw) {
+      return;
+    }
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data)) {
+      return;
+    }
+    for (const item of data) {
+      const host = String(item || "").toLowerCase();
+      if (host) {
+        lanAuthHosts.add(host);
+      }
+    }
+  } catch (error) {
+  }
+};
+
+const rememberLanAuthHost = (url) => {
+  const host = lanAuthHostFromUrl(url);
+  if (!host) {
+    return;
+  }
+  lanAuthHosts.add(host);
+  persistLanAuthHosts();
+};
+
+const loadPreferredVideoSource = () => {
+  try {
+    preferredVideoSourceId = localStorage.getItem(VIDEO_SOURCE_PREF_KEY) || "";
+  } catch (error) {
+    preferredVideoSourceId = "";
+  }
+};
+
+const savePreferredVideoSource = (sourceId) => {
+  const value = String(sourceId || "").trim();
+  preferredVideoSourceId = value;
+  try {
+    if (value) {
+      localStorage.setItem(VIDEO_SOURCE_PREF_KEY, value);
+    } else {
+      localStorage.removeItem(VIDEO_SOURCE_PREF_KEY);
+    }
+  } catch (error) {
+  }
+};
+
+const loadPreferredPlaylist = () => {
+  try {
+    preferredPlaylistId = localStorage.getItem(PLAYLIST_TARGET_KEY) || "";
+  } catch (error) {
+    preferredPlaylistId = "";
+  }
+};
+
+const savePreferredPlaylist = (playlistId) => {
+  const value = String(playlistId || "").trim();
+  preferredPlaylistId = value;
+  try {
+    if (value) {
+      localStorage.setItem(PLAYLIST_TARGET_KEY, value);
+    } else {
+      localStorage.removeItem(PLAYLIST_TARGET_KEY);
+    }
+  } catch (error) {
+  }
+};
+
+const loadPlaylistMembershipCache = () => {
+  try {
+    const raw = localStorage.getItem(PLAYLIST_MEMBERSHIP_KEY);
+    if (!raw) {
+      state.playlist.membership = {};
+      return;
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      state.playlist.membership = {};
+      return;
+    }
+    state.playlist.membership = { ...parsed };
+  } catch (error) {
+    state.playlist.membership = {};
+  }
+};
+
+const savePlaylistMembershipCache = () => {
+  try {
+    localStorage.setItem(
+      PLAYLIST_MEMBERSHIP_KEY,
+      JSON.stringify(state.playlist.membership || {})
+    );
+  } catch (error) {
+  }
+};
+
+const appendCacheBust = (url) => {
+  const parsed = parseUrlSafe(url);
+  if (!parsed) {
+    return url;
+  }
+  const nonce = Number(state.player.sourceNonce) || Date.now();
+  parsed.searchParams.set("_auth_retry", String(nonce));
+  return parsed.toString();
+};
+
+const clearLanAuthRequirement = () => {
+  state.player.authRequired = false;
+  state.player.authUrl = "";
+  state.player.authHost = "";
+};
+
+const openUrlInNewTab = (url) => {
+  if (typeof window === "undefined" || !url) {
+    return false;
+  }
+  try {
+    const tab = window.open(url, "_blank", "noopener,noreferrer");
+    return Boolean(tab);
+  } catch (error) {
+    return false;
+  }
+};
+
+const requestLanAuth = (url, autoOpen = false) => {
+  state.player.authRequired = true;
+  state.player.authUrl = url || "";
+  state.player.authHost = lanAuthHostFromUrl(url);
+  state.player.error = "检测到局域网资源需要认证，请先授权后重试播放";
+  if (autoOpen && state.player.authUrl) {
+    const opened = openUrlInNewTab(state.player.authUrl);
+    if (!opened) {
+      state.player.error =
+        "检测到局域网资源需要认证，浏览器拦截了弹窗，请点击“去授权”";
+    }
+  }
+};
+
+const openLanAuthPage = () => {
+  const url = state.player.authUrl || "";
+  if (!url) {
+    return;
+  }
+  const opened = openUrlInNewTab(url);
+  if (!opened) {
+    state.player.error =
+      "检测到局域网资源需要认证，浏览器拦截了弹窗，请允许弹窗后重试";
+  }
+};
+
+const confirmLanAuthAndRetry = async () => {
+  const url = state.player.authUrl || "";
+  if (url) {
+    rememberLanAuthHost(url);
+  }
+  state.player.sourceNonce = Date.now();
+  clearLanAuthRequirement();
+  state.player.notice = "";
+  state.player.error = "";
+  state.player.loadingHint = "正在重试播放...";
+  await retryCurrentPlayback({
+    forceRefetchDetail: true,
+    forceCacheBust: true,
+    forcedSourceId: state.player.sourceId || "",
+  });
 };
 
 const resolveOrientation = (width, height) => {
@@ -838,6 +1222,11 @@ const applyResumeTime = () => {
 };
 
 const preparePlaybackState = (item) => {
+  clearLanAuthRequirement();
+  state.player.sources = [];
+  state.player.sourceId = "";
+  state.player.sourceLabel = "";
+  state.player.sourceNonce = 0;
   state.player.resumeTime = 0;
   state.player.pendingPlay = false;
   state.player.suppressAutoplay = false;
@@ -936,6 +1325,7 @@ const getPlaybackLabel = (item) => {
 };
 
 const showDeletedNotice = () => {
+  clearLanAuthRequirement();
   state.player.notice = "当前作品已删除";
   state.player.error = "";
   state.player.loading = false;
@@ -983,6 +1373,33 @@ const shouldProxyStream = (url) => {
   }
 };
 
+const unwrapProxyStreamTarget = (value) => {
+  if (!value || !value.includes("/client/douyin/stream")) {
+    return "";
+  }
+  try {
+    const base = typeof window !== "undefined" ? window.location.origin : "http://localhost";
+    const parsed = new URL(value, base);
+    const path = String(parsed.pathname || "");
+    if (
+      !path.endsWith("/client/douyin/stream") &&
+      !path.endsWith("/client/douyin/stream-live")
+    ) {
+      return "";
+    }
+    const target = String(parsed.searchParams.get("url") || "").trim();
+    if (!target) {
+      return "";
+    }
+    if (target.startsWith("http://") || target.startsWith("https://")) {
+      return target;
+    }
+    return "";
+  } catch (error) {
+    return "";
+  }
+};
+
 const streamUrl = (url, options = {}) => {
   if (!url) {
     return "";
@@ -990,6 +1407,10 @@ const streamUrl = (url, options = {}) => {
   const isLive = Boolean(options.live);
   const streamPath = isLive ? "/client/douyin/stream-live" : "/client/douyin/stream";
   if (url.includes("/client/douyin/stream-live?url=") || url.includes("/client/douyin/stream?url=")) {
+    const target = unwrapProxyStreamTarget(url);
+    if (target && !shouldProxyStream(target)) {
+      return target;
+    }
     return url.startsWith("/") ? buildApiUrl(url) : url;
   }
   if (url.startsWith("http://") || url.startsWith("https://")) {
@@ -1009,7 +1430,24 @@ const prefetchStreamUrl = (url) => {
     return "";
   }
   if (url.includes("/client/douyin/stream?url=")) {
+    const target = unwrapProxyStreamTarget(url);
+    if (target && !shouldProxyStream(target)) {
+      return target;
+    }
     return url.startsWith("/") ? buildApiUrl(url) : url;
+  }
+  if (url.includes("/client/douyin/stream-live?url=")) {
+    const target = unwrapProxyStreamTarget(url);
+    if (target && !shouldProxyStream(target)) {
+      return target;
+    }
+    return url.startsWith("/") ? buildApiUrl(url) : url;
+  }
+  if (url.startsWith("http://") || url.startsWith("https://")) {
+    if (shouldProxyStream(url)) {
+      return buildApiUrl(`/client/douyin/stream?url=${encodeURIComponent(url)}`);
+    }
+    return url;
   }
   if (url.startsWith("/")) {
     return buildApiUrl(url);
@@ -1035,9 +1473,33 @@ const apiRequest = async (path, options = {}) => {
   }
   if (!response.ok) {
     const detail = data?.detail || data?.message || response.statusText;
-    throw new Error(detail || "请求失败");
+    const error = new Error(detail || "请求失败");
+    error.status = response.status;
+    error.path = path;
+    error.payload = data;
+    throw error;
   }
   return data;
+};
+
+const toText = (value) => String(value || "").trim();
+
+const looksLikeRawLiveId = (value) => /^live_[A-Za-z0-9._-]{20,}$/.test(toText(value));
+
+const pickReadableTitle = (candidate, fallback, awemeId = "") => {
+  const text = toText(candidate);
+  const backup = toText(fallback);
+  const idText = toText(awemeId);
+  if (!text) {
+    return backup;
+  }
+  if (idText && text === idText) {
+    return backup || text;
+  }
+  if (looksLikeRawLiveId(text)) {
+    return backup || text;
+  }
+  return text;
 };
 
 const resolveFiltersFromPath = () => {
@@ -1093,9 +1555,21 @@ const loadPlaylists = async () => {
     const data = await apiRequest("/client/douyin/playlists?page=1&page_size=200");
     const items = data.items || [];
     state.playlists = items;
+    const fallbackId = items.length ? String(items[0].id) : "";
+    const preferredId = String(preferredPlaylistId || "");
+    const hasPreferred = Boolean(
+      preferredId && items.some((item) => String(item.id) === preferredId)
+    );
+    const preferredOrFallback = hasPreferred ? preferredId : fallbackId;
     if (!state.playlist.addId && items.length) {
-      state.playlist.addId = String(items[0].id);
+      state.playlist.addId = preferredOrFallback;
+    } else if (
+      state.playlist.addId &&
+      !items.some((item) => String(item.id) === String(state.playlist.addId))
+    ) {
+      state.playlist.addId = preferredOrFallback;
     }
+    savePreferredPlaylist(state.playlist.addId || "");
     if (
       state.filter.playlistId &&
       !items.some((item) => String(item.id) === String(state.filter.playlistId))
@@ -1126,12 +1600,24 @@ const loadUsers = async () => {
   }
 };
 
+const loadNetworkInfo = async () => {
+  try {
+    const data = await apiRequest("/client/network");
+    const payload = data?.data || {};
+    state.network.ip = payload.ip || "";
+    state.network.isLan = Boolean(payload.is_lan);
+    state.network.webdavBaseUrl = payload.webdav_base_url || "";
+    state.network.webdavOriginBaseUrl = payload.webdav_origin_base_url || "";
+  } catch (error) {
+  }
+};
+
 const resolvePlaylistName = (id) => {
   const target = state.playlists.find((item) => String(item.id) === String(id));
   return target?.name || "";
 };
 
-const WORK_TYPES = new Set(["video", "note"]);
+const WORK_TYPES = new Set(["video", "note", "live_record"]);
 
 const isPlayableItem = (item) => {
   return Boolean(item && WORK_TYPES.has(item.type));
@@ -1144,6 +1630,9 @@ const isPlayableType = (type) => {
 const getTypeLabel = (type) => {
   if (type === "live") {
     return "直播";
+  }
+  if (type === "live_record") {
+    return "直播回放";
   }
   if (type === "note") {
     return "图文";
@@ -1158,14 +1647,111 @@ const resolveDetailType = (detail, fallbackType = "video") => {
   return fallbackType === "note" ? "note" : "video";
 };
 
-const resolveDetailSource = (detail, detailType) => {
-  if (!detail) {
+const normalizeDetailVideoSources = (detail) => {
+  const sources = [];
+  const seen = new Set();
+  const uploadEnabled =
+    typeof detail?.upload_enabled === "boolean" ? detail.upload_enabled : true;
+  const rawList = Array.isArray(detail?.video_urls) ? detail.video_urls : [];
+  const appendSource = (sourceId, label, url) => {
+    const target = String(url || "").trim();
+    if (!sourceId || !target) {
+      return;
+    }
+    const dedupeKey = target.toLowerCase();
+    if (seen.has(dedupeKey)) {
+      return;
+    }
+    seen.add(dedupeKey);
+    sources.push({
+      id: String(sourceId),
+      label: String(label || sourceId),
+      url: target,
+    });
+  };
+  for (let index = 0; index < rawList.length; index += 1) {
+    const item = rawList[index] || {};
+    appendSource(item.id || `source_${index + 1}`, item.label || "", item.url || "");
+  }
+  if (!sources.length) {
+    if (detail?.aweme_id && detail?.local_path) {
+      appendSource(
+        "local_cache",
+        "本地缓存",
+        `/client/douyin/local-stream?aweme_id=${encodeURIComponent(String(detail.aweme_id))}`
+      );
+    }
+    if (uploadEnabled) {
+      appendSource(
+        "nas_origin",
+        "NAS(局域网)",
+        detail?.uploaded_origin_url || detail?.upload_origin_destination || ""
+      );
+      appendSource(
+        "nas_proxy",
+        "NAS(代理)",
+        detail?.uploaded_url || detail?.upload_destination || ""
+      );
+    }
+    appendSource("douyin", "抖音", detail?.video_url || "");
+  }
+  return sources;
+};
+
+const pickVideoSourceId = (sources, detail, options = {}) => {
+  if (!Array.isArray(sources) || !sources.length) {
     return "";
   }
-  if (detailType === "note") {
-    return detail.audio_url || "";
+  const allowed = new Set(sources.map((item) => item.id));
+  const forced = String(options.forcedSourceId || "").trim();
+  if (forced && allowed.has(forced)) {
+    return forced;
   }
-  return detail.video_url || "";
+  const current = String(state.player.sourceId || "").trim();
+  if (current && allowed.has(current)) {
+    return current;
+  }
+  const preferred = String(preferredVideoSourceId || "").trim();
+  if (preferred && allowed.has(preferred)) {
+    return preferred;
+  }
+  const backendDefault = String(detail?.default_video_source || "").trim();
+  if (backendDefault && allowed.has(backendDefault)) {
+    return backendDefault;
+  }
+  return String(sources[0]?.id || "");
+};
+
+const resolveDetailSource = (detail, detailType, options = {}) => {
+  if (!detail) {
+    return {
+      url: "",
+      sourceId: "",
+      sourceLabel: "",
+      sources: [],
+      type: detailType,
+    };
+  }
+  if (detailType === "note") {
+    const audio = String(detail.audio_url || "").trim();
+    return {
+      url: audio,
+      sourceId: audio ? "audio" : "",
+      sourceLabel: audio ? "音频" : "",
+      sources: [],
+      type: "note",
+    };
+  }
+  const sources = normalizeDetailVideoSources(detail);
+  const sourceId = pickVideoSourceId(sources, detail, options);
+  const current = sources.find((item) => item.id === sourceId) || null;
+  return {
+    url: current?.url || "",
+    sourceId: current?.id || "",
+    sourceLabel: current?.label || "",
+    sources,
+    type: "video",
+  };
 };
 
 const itemKey = (item, index) => {
@@ -1353,6 +1939,7 @@ const refreshFeedSilently = async (cause = "") => {
       const index = items.findIndex((item) => getItemIdentity(item) === activeId);
       if (index >= 0) {
         state.activeIndex = index;
+        void syncActivePlaylistMembership(true);
         return;
       }
     }
@@ -1413,6 +2000,7 @@ const loadMore = async () => {
 
 const cleanupPlayer = () => {
   resetPlaybackHeal();
+  clearLanAuthRequirement();
   if (hlsInstance) {
     hlsInstance.destroy();
     hlsInstance = null;
@@ -1513,7 +2101,8 @@ const prefetchDetail = async (item) => {
     );
     const detail = data.data || {};
     const detailType = resolveDetailType(detail, item.type);
-    const sourceUrl = resolveDetailSource(detail, detailType);
+    const source = resolveDetailSource(detail, detailType);
+    const sourceUrl = source.url || "";
     if (sourceUrl) {
       prefetchCache.set(item.aweme_id, detail);
     }
@@ -1529,7 +2118,8 @@ const prefetchStreamSegment = async (item, detail) => {
   }
   const awemeId = item.aweme_id || "";
   const detailType = resolveDetailType(detail, item.type);
-  const sourceUrl = resolveDetailSource(detail, detailType);
+  const source = resolveDetailSource(detail, detailType);
+  const sourceUrl = source.url || "";
   if (!awemeId || !sourceUrl) {
     return;
   }
@@ -1653,34 +2243,163 @@ const replayFromList = async (item, index) => {
   await playMedia();
 };
 
-const addToPlaylist = async () => {
-  if (!canAddToPlaylist.value) {
+const playlistMembershipKey = (playlistId, awemeId) => {
+  const p = String(playlistId || "").trim();
+  const w = String(awemeId || "").trim();
+  if (!p || !w) {
+    return "";
+  }
+  return `${p}:${w}`;
+};
+
+const readPlaylistMembership = (playlistId, awemeId) => {
+  const key = playlistMembershipKey(playlistId, awemeId);
+  if (!key) {
+    return null;
+  }
+  if (!Object.prototype.hasOwnProperty.call(state.playlist.membership, key)) {
+    return null;
+  }
+  return Boolean(state.playlist.membership[key]);
+};
+
+const writePlaylistMembership = (playlistId, awemeId, exists) => {
+  const key = playlistMembershipKey(playlistId, awemeId);
+  if (!key) {
+    return;
+  }
+  state.playlist.membership = {
+    ...state.playlist.membership,
+    [key]: Boolean(exists),
+  };
+  savePlaylistMembershipCache();
+};
+
+const syncActivePlaylistMembership = async (force = false) => {
+  const item = activeItem.value;
+  const playlistId = String(state.playlist.addId || "");
+  const awemeId = String(item?.aweme_id || "");
+  const requestKey = `${playlistId}:${awemeId}`;
+  if (!playlistId || !awemeId || !isPlayableItem(item)) {
+    state.playlist.containsActive = false;
+    return;
+  }
+  if (state.playlist.checking && state.playlist.checkingKey === requestKey) {
+    return;
+  }
+  const cached = readPlaylistMembership(playlistId, awemeId);
+  if (!force && cached !== null) {
+    state.playlist.containsActive = cached;
+    return;
+  }
+  state.playlist.checking = true;
+  state.playlist.checkingKey = requestKey;
+  try {
+    const clientPath = `/client/douyin/playlists/${encodeURIComponent(playlistId)}/items/check`;
+    const data = await apiRequest(clientPath, {
+      method: "POST",
+      body: { aweme_ids: [awemeId] },
+    });
+    const exists = Array.isArray(data?.data?.exists)
+      ? data.data.exists.includes(awemeId)
+      : false;
+    writePlaylistMembership(playlistId, awemeId, exists);
+    state.playlist.containsActive = exists;
+  } catch (error) {
+    state.playlist.containsActive = cached === null ? false : cached;
+  } finally {
+    if (state.playlist.checkingKey === requestKey) {
+      state.playlist.checking = false;
+      state.playlist.checkingKey = "";
+    }
+  }
+};
+
+const handlePlaylistTargetChange = async () => {
+  savePreferredPlaylist(state.playlist.addId || "");
+  await syncActivePlaylistMembership(true);
+};
+
+const togglePlaylistItem = async () => {
+  if (!canManagePlaylist.value || state.playlist.toggling) {
     return;
   }
   const item = activeItem.value;
-  if (!item?.aweme_id) {
+  const awemeId = String(item?.aweme_id || "");
+  const playlistId = String(state.playlist.addId || "");
+  if (!awemeId || !playlistId) {
     return;
   }
+  const removeMode = Boolean(state.playlist.containsActive);
+  state.playlist.toggling = true;
   try {
-    await apiRequest(
-      `/client/douyin/playlists/${encodeURIComponent(state.playlist.addId)}/items`,
-      {
-        method: "POST",
-        body: { aweme_ids: [item.aweme_id] },
-      }
+    const clientPath = removeMode
+      ? `/client/douyin/playlists/${encodeURIComponent(playlistId)}/items/remove`
+      : `/client/douyin/playlists/${encodeURIComponent(playlistId)}/items`;
+    const result = await apiRequest(clientPath, {
+      method: "POST",
+      body: { aweme_ids: [awemeId] },
+    });
+    await syncActivePlaylistMembership(true);
+    const changed = Number(
+      removeMode ? result?.data?.removed || 0 : result?.data?.inserted || 0
     );
-    const name = resolvePlaylistName(state.playlist.addId);
-    const message = name ? `已加入播放列表：${name}` : "已加入播放列表";
+    const containsNow = Boolean(state.playlist.containsActive);
+    const name = resolvePlaylistName(playlistId);
+    const message = removeMode
+      ? containsNow
+        ? name
+          ? `移除未生效：${name}`
+          : "移除未生效"
+        : name
+          ? `已从播放列表移除：${name}`
+          : "已从播放列表移除"
+      : containsNow
+        ? name
+          ? changed > 0
+            ? `已加入播放列表：${name}`
+            : `已在播放列表中：${name}`
+          : changed > 0
+            ? "已加入播放列表"
+            : "已在播放列表中"
+        : name
+          ? `加入未生效：${name}`
+          : "加入未生效";
     state.player.notice = message;
     state.player.error = "";
+    await loadPlaylists();
+    if (
+      removeMode &&
+      state.filter.mode === "playlist" &&
+      String(state.filter.playlistId || "") === playlistId
+    ) {
+      scheduleFeedRefresh("delete");
+    }
     setTimeout(() => {
       if (state.player.notice === message) {
         state.player.notice = "";
       }
     }, 1400);
   } catch (error) {
-    state.player.error = error.message || "添加失败";
+    state.player.error = error.message || (removeMode ? "移除失败" : "添加失败");
+  } finally {
+    state.playlist.toggling = false;
   }
+};
+
+const handleVideoSourceChange = async () => {
+  const sourceId = String(state.player.sourceId || "").trim();
+  if (!sourceId || state.player.loading) {
+    return;
+  }
+  savePreferredVideoSource(sourceId);
+  state.player.sourceNonce = Date.now();
+  clearLanAuthRequirement();
+  state.player.loadingHint = "正在切换播放源...";
+  await retryCurrentPlayback({
+    forcedSourceId: sourceId,
+    forceCacheBust: true,
+  });
 };
 
 const attachVideo = async (url) => {
@@ -1689,7 +2408,7 @@ const attachVideo = async (url) => {
   if (!video) {
     return;
   }
-  const sourceUrl = streamUrl(url, { live: true });
+  const sourceUrl = streamUrl(url);
   if (!sourceUrl) {
     state.player.error = "未获取到播放地址";
     return;
@@ -1813,7 +2532,7 @@ const pickStreamUrl = (hlsMap, flvMap) => {
   return "";
 };
 
-const resolveVideoSource = async (item) => {
+const resolveVideoSource = async (item, options = {}) => {
   state.player.loading = true;
   state.player.error = "";
   state.player.type = item.type === "note" ? "note" : "video";
@@ -1825,27 +2544,63 @@ const resolveVideoSource = async (item) => {
   state.player.orientation = "vertical";
   applyPlayerSize(item.width, item.height);
   try {
-    let detail = prefetchCache.get(item.aweme_id);
+    const forceRefetch = Boolean(options.forceRefetchDetail);
+    let detail = !forceRefetch ? prefetchCache.get(item.aweme_id) : null;
     if (!detail) {
       const data = await apiRequest(
         `/client/douyin/detail?aweme_id=${encodeURIComponent(item.aweme_id || "")}`
       );
       detail = data.data || {};
+      if (item.aweme_id) {
+        prefetchCache.set(item.aweme_id, detail);
+      }
     }
     const detailType = resolveDetailType(detail, item.type);
-    const sourceUrl = resolveDetailSource(detail, detailType);
+    const source = resolveDetailSource(detail, detailType, {
+      forcedSourceId: options.forcedSourceId || "",
+    });
+    const sourceUrl = source.url || "";
     state.player.cover = detail.cover || state.player.cover;
-    state.player.title = detail.title || state.player.title;
+    state.player.title = pickReadableTitle(
+      detail.title,
+      state.player.title,
+      detail.aweme_id || item.aweme_id
+    );
     state.player.nickname = detail.nickname || state.player.nickname;
     state.player.avatar = detail.avatar || state.player.avatar;
     applyPlayerSize(detail.width, detail.height);
     state.player.type = detailType;
+    state.player.sources = source.sources || [];
+    state.player.sourceId = source.sourceId || "";
+    state.player.sourceLabel = source.sourceLabel || "";
     if (!sourceUrl) {
+      if (item?.type === "live_record" && item?.aweme_id) {
+        const localFallback = `/client/douyin/local-stream?aweme_id=${encodeURIComponent(
+          String(item.aweme_id)
+        )}`;
+        state.player.sourceId = "local_cache";
+        state.player.sourceLabel = "本地缓存";
+        state.player.sources = [
+          { id: "local_cache", label: "本地缓存", url: localFallback },
+        ];
+        await attachVideo(localFallback);
+        return;
+      }
       state.player.error =
         detailType === "note" ? "该内容为图文，暂无可播放音频" : "未获取到视频地址";
       return;
     }
-    await attachVideo(sourceUrl);
+    if (isLanAuthCandidateUrl(sourceUrl) && !hasLanAuthHost(sourceUrl)) {
+      cleanupPlayer();
+      requestLanAuth(sourceUrl, Boolean(options.userAction));
+      return;
+    }
+    clearLanAuthRequirement();
+    const finalSourceUrl =
+      Boolean(options.forceCacheBust) && isLanAuthCandidateUrl(sourceUrl)
+        ? appendCacheBust(sourceUrl)
+        : sourceUrl;
+    await attachVideo(finalSourceUrl);
   } catch (error) {
     state.player.error = error.message || "获取视频失败";
   } finally {
@@ -1858,6 +2613,9 @@ const resolveLiveSource = async (item) => {
   state.player.loading = true;
   state.player.error = "";
   state.player.type = "live";
+  state.player.sources = [];
+  state.player.sourceId = "";
+  state.player.sourceLabel = "";
   state.player.cover = item.cover || "";
   state.player.title = item.title || "直播中";
   state.player.avatar = item.avatar || "";
@@ -1896,6 +2654,23 @@ const resolveLiveSource = async (item) => {
   }
 };
 
+const retryCurrentPlayback = async (options = {}) => {
+  const item = activeItem.value;
+  if (!item) {
+    return;
+  }
+  if (item.type === "live") {
+    await resolveLiveSource(item);
+    return;
+  }
+  await resolveVideoSource(item, {
+    userAction: true,
+    forcedSourceId: options.forcedSourceId || state.player.sourceId || "",
+    forceRefetchDetail: Boolean(options.forceRefetchDetail),
+    forceCacheBust: Boolean(options.forceCacheBust),
+  });
+};
+
 const selectItem = async (index, userAction, keepLoadingHint = false) => {
   if (index < 0 || index >= state.items.length) {
     return;
@@ -1905,6 +2680,7 @@ const selectItem = async (index, userAction, keepLoadingHint = false) => {
     if (userAction) {
       unlockAudio();
     }
+    void syncActivePlaylistMembership(true);
     return;
   }
   const currentItem = activeItem.value;
@@ -1930,6 +2706,7 @@ const selectItem = async (index, userAction, keepLoadingHint = false) => {
     }
   }
   state.activeIndex = index;
+  void syncActivePlaylistMembership(true);
   state.mobileTitleExpanded = false;
   state.player.nextPreview = "";
   state.player.notice = "";
@@ -1948,7 +2725,7 @@ const selectItem = async (index, userAction, keepLoadingHint = false) => {
   if (item.type === "live") {
     await resolveLiveSource(item);
   } else {
-    await resolveVideoSource(item);
+    await resolveVideoSource(item, { userAction });
   }
   void prefetchNext(index);
 };
@@ -2124,10 +2901,20 @@ const handlePlaybackWaiting = () => {
 };
 
 const handlePlaybackError = () => {
+  const source = state.player.src || "";
+  if (isLanAuthCandidateUrl(source)) {
+    requestLanAuth(source, false);
+    return;
+  }
   schedulePlaybackHeal();
 };
 
 const handlePlaybackRecovered = () => {
+  const source = state.player.src || "";
+  if (isLanAuthCandidateUrl(source)) {
+    rememberLanAuthHost(source);
+    clearLanAuthRequirement();
+  }
   resetPlaybackHeal();
 };
 
@@ -2151,9 +2938,15 @@ const handlePlaybackPlay = () => {
 
 onMounted(async () => {
   loadPlaybackStore();
+  loadLanAuthHosts();
+  loadPreferredVideoSource();
+  loadPreferredPlaylist();
+  loadPlaylistMembershipCache();
+  await loadNetworkInfo();
   await loadUsers();
   await loadPlaylists();
   await syncRouteFilter(true);
+  await syncActivePlaylistMembership(true);
   connectFeedStream();
   const video = videoRef.value;
   if (video) {
@@ -2184,6 +2977,17 @@ watch(
   async () => {
     await nextTick();
     updateDisplaySize();
+  }
+);
+
+watch(
+  () => [
+    String(state.playlist.addId || ""),
+    String(activeItem.value?.aweme_id || ""),
+    String(activeItem.value?.type || ""),
+  ],
+  async () => {
+    await syncActivePlaylistMembership();
   }
 );
 

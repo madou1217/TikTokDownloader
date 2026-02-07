@@ -180,3 +180,10 @@ cython_debug/
 uv.lock
 
 node_modules/
+
+# 保证 Docker 文档不会被全局忽略规则误伤
+!docs/
+!docker.md
+!Docker.md
+!docs/docker.md
+!docs/Docker.md

@@ -21,6 +21,13 @@
           <span v-if="state.loading.live" class="spinner dark"></span>
           {{ state.loading.live ? "刷新中..." : "刷新直播" }}
         </button>
+        <button
+          class="ghost"
+          type="button"
+          @click="toggleAutoDownload"
+        >
+          {{ state.user.auto_update ? "自动下载: 开启" : "自动下载: 关闭" }}
+        </button>
       </div>
     </div>
 
@@ -139,6 +146,111 @@
             </svg>
             <span>{{ formatCount(item.play_count) }}</span>
           </div>
+          <div
+            class="work-upload-state"
+            :class="`status-${getUploadState(item)}`"
+            :title="getUploadTitle(item)"
+          >
+            <svg
+              v-if="getUploadState(item) === 'uploaded'"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                d="M6 16a5 5 0 0 1 .8-9.9A6 6 0 0 1 18.5 8a4 4 0 0 1-.5 8H9"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <path
+                d="m9 16 2 2 4-4"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <svg
+              v-else-if="getUploadState(item) === 'uploading'"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                d="M6 16a5 5 0 0 1 .8-9.9A6 6 0 0 1 18.5 8a4 4 0 0 1-.5 8H8"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <path
+                d="M12 9v7m0 0-3-3m3 3 3-3"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <svg
+              v-else-if="getUploadState(item) === 'downloading'"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                d="M6 16a5 5 0 0 1 .8-9.9A6 6 0 0 1 18.5 8a4 4 0 0 1-.5 8H8"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <path
+                d="M12 8v7m0 0-3-3m3 3 3-3"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <svg
+              v-else-if="getUploadState(item) === 'failed'"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                d="M6 16a5 5 0 0 1 .8-9.9A6 6 0 0 1 18.5 8a4 4 0 0 1-.5 8H8"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <path
+                d="M9 9l6 6m0-6-6 6"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M6 16a5 5 0 0 1 .8-9.9A6 6 0 0 1 18.5 8a4 4 0 0 1-.5 8H8"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <path
+                d="M5 5 19 19"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+            </svg>
+          </div>
         </div>
         <div class="work-body">
           <a
@@ -150,7 +262,22 @@
           >
             {{ item.desc || item.aweme_id }}
           </a>
-          <p class="work-meta">{{ formatDateTime(item) }}</p>
+          <div class="work-meta-row">
+            <p class="work-meta">{{ formatDateTime(item) }}</p>
+            <span class="work-stage-tag" :class="`status-${getUploadState(item)}`">
+              {{ getUploadText(item) }}
+            </span>
+          </div>
+          <a
+            v-if="item.upload_destination"
+            class="work-upload-path"
+            :href="item.upload_destination"
+            target="_blank"
+            rel="noreferrer"
+            :title="item.upload_destination"
+          >
+            上传路径
+          </a>
         </div>
       </article>
       <div v-if="!state.works.items.length && !state.works.loading" class="empty">
@@ -306,6 +433,9 @@ const mediaUrl = (url) => {
 };
 
 const workUrl = (item) => {
+  if (item?.type === "live") {
+    return item?.upload_destination || item?.upload_origin_destination || "#";
+  }
   const awemeId = item?.aweme_id || "";
   if (!awemeId) {
     return "";
@@ -344,6 +474,72 @@ const formatDateTime = (item) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
     date.getHours()
   )}:${pad(date.getMinutes())}`;
+};
+
+const getUploadState = (item) => {
+  const status = (item?.upload_status || "pending").toLowerCase();
+  if (["uploaded", "uploading", "downloading", "downloaded", "failed"].includes(status)) {
+    return status;
+  }
+  return "pending";
+};
+
+const getUploadTitle = (item) => {
+  const status = getUploadState(item);
+  if (status === "uploaded") {
+    return "上传完成";
+  }
+  if (status === "uploading") {
+    return "下载完成，上传中";
+  }
+  if (status === "downloaded") {
+    return "已下载，未上传";
+  }
+  if (status === "downloading") {
+    return "下载中";
+  }
+  if (status === "failed") {
+    return item?.upload_message || "处理失败";
+  }
+  return "未下载";
+};
+
+const getUploadText = (item) => {
+  const status = getUploadState(item);
+  if (status === "uploaded") {
+    return "已上传";
+  }
+  if (status === "uploading") {
+    return "上传中";
+  }
+  if (status === "downloaded") {
+    return "未上传";
+  }
+  if (status === "downloading") {
+    return "下载中";
+  }
+  if (status === "failed") {
+    return "失败";
+  }
+  return "未下载";
+};
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const hasRunningOrPendingWorks = () =>
+  state.works.items.some((item) => {
+    const status = getUploadState(item);
+    return status === "pending" || status === "downloading" || status === "uploading";
+  });
+
+const pollWorkProgress = async (rounds = 6, intervalMs = 5000) => {
+  for (let i = 0; i < rounds; i += 1) {
+    if (!hasRunningOrPendingWorks()) {
+      return;
+    }
+    await sleep(intervalMs);
+    await reloadWorks();
+  }
 };
 
 const todayString = () => {
@@ -455,12 +651,49 @@ const fetchTodayData = async () => {
     await fetchLatestWorks();
     await refreshLive();
     await reloadWorks();
+    if (state.user.auto_update) {
+      await pollWorkProgress();
+    }
     await loadUser();
     setAlert("success", "拉取完成");
   } catch (error) {
     setAlert("error", error.message);
   } finally {
     state.loading.fetch = false;
+  }
+};
+
+const toggleAutoDownload = async () => {
+  if (!userId.value) {
+    return;
+  }
+  try {
+    const payload = {
+      auto_update: !Boolean(state.user.auto_update),
+      update_window_start: state.user.update_window_start || "",
+      update_window_end: state.user.update_window_end || "",
+    };
+    const data = await apiRequest(
+      `/admin/douyin/users/${encodeURIComponent(userId.value)}/settings`,
+      {
+        method: "PUT",
+        body: payload,
+      }
+    );
+    state.user = data || state.user;
+    await loadUser();
+    await reloadWorks();
+    if (state.user.auto_update) {
+      await pollWorkProgress();
+    }
+    setAlert(
+      "success",
+      state.user.auto_update
+        ? "已开启自动下载，已触发立即扫描"
+        : "已关闭自动下载"
+    );
+  } catch (error) {
+    setAlert("error", error.message);
   }
 };
 

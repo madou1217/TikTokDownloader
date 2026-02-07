@@ -88,6 +88,24 @@ class Settings:
         "run_command": "",
         "ffmpeg": "",
         "live_qualities": "",
+        "upload": {
+            "enabled": False,
+            "delete_local_after_upload": False,
+            "video_suffixes": [
+                "mp4",
+                "mov",
+            ],
+            "webdav": {
+                "enabled": False,
+                "base_url": "",
+                "origin_base_url": "",
+                "username": "",
+                "password": "",
+                "remote_root": "/DouK-Downloader",
+                "timeout": 30,
+                "verify_ssl": True,
+            },
+        },
         "douyin_platform": True,
         "tiktok_platform": True,
         "browser_info": {

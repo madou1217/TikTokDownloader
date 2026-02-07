@@ -303,11 +303,16 @@ table {
 
 .user-table th:nth-child(6),
 .user-table td:nth-child(6) {
-  width: 150px;
+  width: 92px;
 }
 
 .user-table th:nth-child(7),
 .user-table td:nth-child(7) {
+  width: 150px;
+}
+
+.user-table th:nth-child(8),
+.user-table td:nth-child(8) {
   width: 120px;
 }
 
@@ -446,6 +451,22 @@ tr:last-child td {
   border-radius: 999px;
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+.toggle-pill {
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  color: #64748b;
+  background: rgba(148, 163, 184, 0.12);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  min-width: 58px;
+}
+
+.toggle-pill.on {
+  border-color: rgba(34, 197, 94, 0.5);
+  color: #16a34a;
+  background: rgba(34, 197, 94, 0.14);
 }
 
 .empty {
@@ -919,6 +940,50 @@ a.ghost {
   fill: currentColor;
 }
 
+.work-upload-state {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.48);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.work-upload-state svg {
+  width: 16px;
+  height: 16px;
+}
+
+.work-upload-state.status-pending {
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.work-upload-state.status-downloading {
+  color: #f59e0b;
+  animation: cloud-flow 0.9s ease-in-out infinite;
+}
+
+.work-upload-state.status-downloaded {
+  color: #38bdf8;
+}
+
+.work-upload-state.status-uploading {
+  color: #38bdf8;
+  animation: cloud-flow 1s ease-in-out infinite;
+}
+
+.work-upload-state.status-uploaded {
+  color: #22c55e;
+}
+
+.work-upload-state.status-failed {
+  color: #ef4444;
+}
+
 .work-body {
   padding: 12px 14px 14px;
   display: grid;
@@ -930,6 +995,48 @@ a.ghost {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.work-stage-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.2;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.78);
+  background: rgba(255, 255, 255, 0.08);
+  white-space: nowrap;
+}
+
+.work-stage-tag.status-pending {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.work-stage-tag.status-downloading {
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.work-stage-tag.status-downloaded {
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+.work-stage-tag.status-uploading {
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+.work-stage-tag.status-uploaded {
+  color: #22c55e;
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.work-stage-tag.status-failed {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.35);
 }
 
 .work-title {
@@ -949,6 +1056,26 @@ a.ghost {
   margin: 0;
   font-size: 12px;
   color: rgba(255, 255, 255, 0.68);
+}
+
+.work-upload-path {
+  margin: 0;
+  font-size: 12px;
+  color: #7dd3fc;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.work-upload-path.pending {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.work-upload-stage {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
 }
 
 .load-more {
@@ -1149,6 +1276,16 @@ a.ghost {
   }
   70% {
     transform: scale(0.98);
+  }
+}
+
+@keyframes cloud-flow {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
   }
 }
 

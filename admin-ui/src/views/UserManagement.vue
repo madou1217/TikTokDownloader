@@ -22,6 +22,7 @@
             <th>昵称</th>
             <th>状态</th>
             <th>直播</th>
+            <th>自动下载</th>
             <th>最近拉取</th>
             <th></th>
           </tr>
@@ -71,6 +72,16 @@
               </span>
             </td>
             <td>{{ item.is_live ? "是" : "否" }}</td>
+            <td>
+              <button
+                class="toggle-pill"
+                :class="{ on: item.auto_update }"
+                type="button"
+                @click="toggleAutoDownload(item)"
+              >
+                {{ item.auto_update ? "开启" : "关闭" }}
+              </button>
+            </td>
             <td class="mono">{{ item.last_fetch_at || "-" }}</td>
             <td class="actions">
               <div class="action-group">
@@ -87,7 +98,7 @@
             </td>
           </tr>
           <tr v-if="!state.items.length && !state.loading.list">
-            <td colspan="7" class="empty">暂无用户数据</td>
+            <td colspan="8" class="empty">暂无用户数据</td>
           </tr>
         </tbody>
       </table>
@@ -299,6 +310,35 @@ const deleteUser = async (secUserId) => {
     });
     await loadUsers();
     setAlert("success", "用户已删除");
+  } catch (error) {
+    setAlert("error", error.message);
+  }
+};
+
+const toggleAutoDownload = async (item) => {
+  if (!item?.sec_user_id) {
+    return;
+  }
+  try {
+    const payload = {
+      auto_update: !Boolean(item.auto_update),
+      update_window_start: item.update_window_start || "",
+      update_window_end: item.update_window_end || "",
+    };
+    const data = await apiRequest(
+      `/admin/douyin/users/${encodeURIComponent(item.sec_user_id)}/settings`,
+      {
+        method: "PUT",
+        body: payload,
+      }
+    );
+    item.auto_update = Boolean(data?.auto_update);
+    setAlert(
+      "success",
+      item.auto_update
+        ? "已开启自动下载，已触发立即扫描"
+        : "已关闭自动下载"
+    );
   } catch (error) {
     setAlert("error", error.message);
   }

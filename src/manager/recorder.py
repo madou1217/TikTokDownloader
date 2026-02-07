@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DownloadRecorder",
+    "UploadRecorder",
 ]
 
 
@@ -150,3 +151,123 @@ class DownloadRecorder:
             if id_ := self.detail.search(i):
                 result.append(id_.group())
         return result
+
+
+class UploadRecorder:
+    def __init__(self, database: "Database"):
+        self.database = database
+
+    async def has_upload(
+        self,
+        file_hash: str,
+        provider: str,
+        destination: str,
+    ) -> bool:
+        if not all((file_hash, provider, destination)):
+            return False
+        return await self.database.has_upload_data(
+            file_hash=file_hash,
+            provider=provider,
+            destination=destination,
+        )
+
+    async def update_upload(
+        self,
+        file_hash: str,
+        provider: str,
+        destination: str,
+        origin_destination: str,
+        local_path: str,
+        local_size: int,
+        work_id: str = "",
+    ) -> None:
+        if not all((file_hash, provider, destination)):
+            return
+        await self.database.write_upload_data(
+            file_hash=file_hash,
+            provider=provider,
+            destination=destination,
+            origin_destination=origin_destination,
+            local_path=local_path,
+            local_size=local_size,
+            work_id=work_id,
+        )
+        if work_id:
+            await self.database.update_douyin_work_upload(
+                aweme_id=work_id,
+                status="uploaded",
+                provider=provider,
+                destination=destination,
+                origin_destination=origin_destination,
+                local_path=local_path,
+                message="",
+                mark_downloaded=True,
+                mark_uploaded=True,
+            )
+
+    async def mark_work_upload_pending(self, aweme_id: str) -> None:
+        if not aweme_id:
+            return
+        await self.database.update_douyin_work_upload(
+            aweme_id=aweme_id,
+            status="pending",
+            message="",
+        )
+
+    async def mark_work_downloading(
+        self,
+        aweme_id: str,
+    ) -> None:
+        if not aweme_id:
+            return
+        await self.database.update_douyin_work_upload(
+            aweme_id=aweme_id,
+            status="downloading",
+            message="",
+        )
+
+    async def mark_work_downloaded(
+        self,
+        aweme_id: str,
+        local_path: str = "",
+    ) -> None:
+        if not aweme_id:
+            return
+        await self.database.update_douyin_work_upload(
+            aweme_id=aweme_id,
+            status="downloaded",
+            local_path=local_path,
+            message="",
+            mark_downloaded=True,
+        )
+
+    async def mark_work_uploading(
+        self,
+        aweme_id: str,
+        local_path: str = "",
+    ) -> None:
+        if not aweme_id:
+            return
+        await self.database.update_douyin_work_upload(
+            aweme_id=aweme_id,
+            status="uploading",
+            local_path=local_path,
+            message="",
+            mark_downloaded=True,
+        )
+
+    async def mark_work_upload_failed(
+        self,
+        aweme_id: str,
+        message: str,
+        local_path: str = "",
+    ) -> None:
+        if not aweme_id:
+            return
+        await self.database.update_douyin_work_upload(
+            aweme_id=aweme_id,
+            status="failed",
+            local_path=local_path,
+            message=message,
+            mark_downloaded=True,
+        )

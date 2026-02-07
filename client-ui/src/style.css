@@ -271,6 +271,10 @@ body {
   background: rgba(249, 115, 22, 0.9);
 }
 
+.type-tag.live_record {
+  background: rgba(234, 88, 12, 0.9);
+}
+
 .type-tag.note {
   background: rgba(59, 130, 246, 0.9);
 }
@@ -420,9 +424,19 @@ body {
 
 .player-actions {
   display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.player-nav-actions,
+.player-extra-actions {
+  display: flex;
   align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .playlist-actions {
@@ -430,6 +444,10 @@ body {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.source-actions select {
+  min-width: 116px;
 }
 
 .playlist-actions select {
@@ -779,6 +797,31 @@ body {
   z-index: 5;
 }
 
+.stage-mask-content {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  max-width: 560px;
+  padding: 0 20px;
+  text-align: center;
+}
+
+.stage-mask-text {
+  line-height: 1.5;
+}
+
+.stage-mask-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.stage-mask-btn {
+  min-width: 108px;
+}
+
 .stage-mask.error {
   background: rgba(120, 20, 20, 0.6);
 }
@@ -862,6 +905,23 @@ button:disabled {
 .ghost:hover {
   border-color: rgba(32, 189, 168, 0.6);
   color: #e8fffb;
+}
+
+.ghost.danger {
+  border-color: rgba(248, 113, 113, 0.55);
+  color: rgba(254, 202, 202, 0.95);
+}
+
+.ghost.danger:hover {
+  border-color: rgba(248, 113, 113, 0.85);
+  color: #fff1f2;
+}
+
+.playlist-toggle-btn {
+  padding: 5px 10px;
+  font-size: 12px;
+  line-height: 1.2;
+  min-width: 56px;
 }
 
 .link {

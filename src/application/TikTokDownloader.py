@@ -22,7 +22,7 @@ from src.custom import (
     VERSION_MAJOR,
     VERSION_MINOR,
 )
-from src.manager import Database, DownloadRecorder
+from src.manager import Database, DownloadRecorder, UploadRecorder
 from src.module import Cookie, MigrateFolder
 from src.record import BaseLogger, LoggerManager
 from src.tools import (
@@ -63,6 +63,7 @@ class TikTokDownloader:
         )
         self.logger = None
         self.recorder = None
+        self.upload_recorder = None
         self.settings = Settings(PROJECT_ROOT, self.console)
         self.event_cookie = Event()
         self.cookie = Cookie(self.settings, self.console)
@@ -231,6 +232,7 @@ class TikTokDownloader:
             self.config["Record"],
             self.console,
         )
+        self.upload_recorder = UploadRecorder(self.database)
         self.logger = {1: LoggerManager, 0: BaseLogger}[self.config["Logger"]]
 
     async def check_update(self):
@@ -394,6 +396,7 @@ class TikTokDownloader:
             console=self.console,
             **self.settings.read(),
             recorder=self.recorder,
+            upload_recorder=self.upload_recorder,
         )
         MigrateFolder(self.parameter).compatible()
         self.parameter.set_headers_cookie()

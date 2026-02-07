@@ -40,6 +40,19 @@ class Database:
         await self.database.execute(
             "CREATE TABLE IF NOT EXISTS download_data (ID TEXT PRIMARY KEY);"
         )
+        await self.database.execute(
+            """CREATE TABLE IF NOT EXISTS upload_data (
+            FILE_HASH TEXT NOT NULL,
+            PROVIDER TEXT NOT NULL,
+            DESTINATION TEXT NOT NULL,
+            ORIGIN_DESTINATION TEXT NOT NULL DEFAULT '',
+            WORK_ID TEXT NOT NULL DEFAULT '',
+            LOCAL_PATH TEXT NOT NULL DEFAULT '',
+            LOCAL_SIZE INTEGER NOT NULL DEFAULT 0,
+            UPLOADED_AT TEXT NOT NULL,
+            PRIMARY KEY (FILE_HASH, PROVIDER, DESTINATION)
+            );"""
+        )
         await self.database.execute("""CREATE TABLE IF NOT EXISTS mapping_data (
         ID TEXT PRIMARY KEY,
         NAME TEXT NOT NULL,
@@ -100,6 +113,14 @@ class Database:
             width INTEGER NOT NULL DEFAULT 0,
             height INTEGER NOT NULL DEFAULT 0,
             work_type TEXT NOT NULL DEFAULT 'video',
+            upload_status TEXT NOT NULL DEFAULT 'pending',
+            upload_provider TEXT NOT NULL DEFAULT '',
+            upload_destination TEXT NOT NULL DEFAULT '',
+            upload_origin_destination TEXT NOT NULL DEFAULT '',
+            upload_message TEXT NOT NULL DEFAULT '',
+            local_path TEXT NOT NULL DEFAULT '',
+            downloaded_at TEXT NOT NULL DEFAULT '',
+            uploaded_at TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL
             );"""
         )
@@ -129,6 +150,31 @@ class Database:
             aweme_id TEXT NOT NULL,
             created_at TEXT NOT NULL,
             UNIQUE(playlist_id, aweme_id)
+            );"""
+        )
+        await self.database.execute(
+            """CREATE TABLE IF NOT EXISTS douyin_live_record (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sec_user_id TEXT NOT NULL,
+            room_id TEXT NOT NULL DEFAULT '',
+            web_rid TEXT NOT NULL DEFAULT '',
+            nickname TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL DEFAULT '',
+            stream_url TEXT NOT NULL DEFAULT '',
+            local_root TEXT NOT NULL DEFAULT '',
+            segment_dir TEXT NOT NULL DEFAULT '',
+            output_file TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'running',
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            error TEXT NOT NULL DEFAULT '',
+            upload_destination TEXT NOT NULL DEFAULT '',
+            upload_origin_destination TEXT NOT NULL DEFAULT '',
+            work_aweme_id TEXT NOT NULL DEFAULT '',
+            started_at TEXT NOT NULL,
+            ended_at TEXT NOT NULL DEFAULT '',
+            uploaded_at TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
             );"""
         )
 
@@ -161,11 +207,42 @@ class Database:
             "width": "INTEGER NOT NULL DEFAULT 0",
             "height": "INTEGER NOT NULL DEFAULT 0",
             "work_type": "TEXT NOT NULL DEFAULT 'video'",
+            "upload_status": "TEXT NOT NULL DEFAULT 'pending'",
+            "upload_provider": "TEXT NOT NULL DEFAULT ''",
+            "upload_destination": "TEXT NOT NULL DEFAULT ''",
+            "upload_origin_destination": "TEXT NOT NULL DEFAULT ''",
+            "upload_message": "TEXT NOT NULL DEFAULT ''",
+            "local_path": "TEXT NOT NULL DEFAULT ''",
+            "downloaded_at": "TEXT NOT NULL DEFAULT ''",
+            "uploaded_at": "TEXT NOT NULL DEFAULT ''",
         }
         for name, ddl in work_columns.items():
             if name not in work_existing:
                 await self.database.execute(
                     f"ALTER TABLE douyin_work ADD COLUMN {name} {ddl};"
+                )
+        await self.cursor.execute("PRAGMA table_info(upload_data);")
+        upload_existing = {row["name"] for row in await self.cursor.fetchall()}
+        upload_columns = {
+            "ORIGIN_DESTINATION": "TEXT NOT NULL DEFAULT ''",
+            "WORK_ID": "TEXT NOT NULL DEFAULT ''",
+        }
+        for name, ddl in upload_columns.items():
+            if name not in upload_existing:
+                await self.database.execute(
+                    f"ALTER TABLE upload_data ADD COLUMN {name} {ddl};"
+                )
+        await self.cursor.execute("PRAGMA table_info(douyin_live_record);")
+        live_existing = {row["name"] for row in await self.cursor.fetchall()}
+        live_columns = {
+            "upload_destination": "TEXT NOT NULL DEFAULT ''",
+            "upload_origin_destination": "TEXT NOT NULL DEFAULT ''",
+            "work_aweme_id": "TEXT NOT NULL DEFAULT ''",
+        }
+        for name, ddl in live_columns.items():
+            if name not in live_existing:
+                await self.database.execute(
+                    f"ALTER TABLE douyin_live_record ADD COLUMN {name} {ddl};"
                 )
         await self.cursor.execute("PRAGMA table_info(douyin_schedule);")
         schedule_existing = {row["name"] for row in await self.cursor.fetchall()}
@@ -184,13 +261,19 @@ class Database:
         await self.database.execute("""INSERT OR IGNORE INTO option_data (NAME, VALUE)
                             VALUES ('Language', 'zh_CN');""")
 
+    async def _query_one(self, sql: str, params: tuple = ()):
+        async with self.database.execute(sql, params) as cursor:
+            return await cursor.fetchone()
+
+    async def _query_all(self, sql: str, params: tuple = ()):
+        async with self.database.execute(sql, params) as cursor:
+            return await cursor.fetchall()
+
     async def read_config_data(self):
-        await self.cursor.execute("SELECT * FROM config_data")
-        return await self.cursor.fetchall()
+        return await self._query_all("SELECT * FROM config_data")
 
     async def read_option_data(self):
-        await self.cursor.execute("SELECT * FROM option_data")
-        return await self.cursor.fetchall()
+        return await self._query_all("SELECT * FROM option_data")
 
     async def update_config_data(
         self,
@@ -220,20 +303,94 @@ class Database:
         await self.database.commit()
 
     async def read_mapping_data(self, id_: str):
-        await self.cursor.execute(
+        return await self._query_one(
             "SELECT NAME, MARK FROM mapping_data WHERE ID=?", (id_,)
         )
-        return await self.cursor.fetchone()
 
     async def has_download_data(self, id_: str) -> bool:
-        await self.cursor.execute("SELECT ID FROM download_data WHERE ID=?", (id_,))
-        return bool(await self.cursor.fetchone())
+        row = await self._query_one("SELECT ID FROM download_data WHERE ID=?", (id_,))
+        return bool(row)
 
     async def write_download_data(self, id_: str):
         await self.database.execute(
             "INSERT OR IGNORE INTO download_data (ID) VALUES (?);", (id_,)
         )
         await self.database.commit()
+
+    async def has_upload_data(
+        self,
+        file_hash: str,
+        provider: str,
+        destination: str,
+    ) -> bool:
+        row = await self._query_one(
+            """SELECT 1
+            FROM upload_data
+            WHERE FILE_HASH=? AND PROVIDER=? AND DESTINATION=?
+            LIMIT 1;""",
+            (file_hash, provider, destination),
+        )
+        return bool(row)
+
+    async def write_upload_data(
+        self,
+        file_hash: str,
+        provider: str,
+        destination: str,
+        origin_destination: str,
+        local_path: str,
+        local_size: int,
+        work_id: str = "",
+    ) -> None:
+        await self.database.execute(
+            """INSERT INTO upload_data (
+                FILE_HASH,
+                PROVIDER,
+                DESTINATION,
+                ORIGIN_DESTINATION,
+                WORK_ID,
+                LOCAL_PATH,
+                LOCAL_SIZE,
+                UPLOADED_AT
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(FILE_HASH, PROVIDER, DESTINATION) DO UPDATE SET
+                ORIGIN_DESTINATION=CASE
+                    WHEN excluded.ORIGIN_DESTINATION!=''
+                    THEN excluded.ORIGIN_DESTINATION
+                    ELSE upload_data.ORIGIN_DESTINATION
+                END,
+                WORK_ID=CASE
+                    WHEN excluded.WORK_ID!=''
+                    THEN excluded.WORK_ID
+                    ELSE upload_data.WORK_ID
+                END,
+                LOCAL_PATH=excluded.LOCAL_PATH,
+                LOCAL_SIZE=excluded.LOCAL_SIZE,
+                UPLOADED_AT=excluded.UPLOADED_AT;""",
+            (
+                file_hash,
+                provider,
+                destination,
+                origin_destination or "",
+                work_id or "",
+                local_path,
+                int(local_size),
+                self._now_str(),
+            ),
+        )
+        await self.database.commit()
+
+    async def get_latest_upload_by_work_id(self, work_id: str) -> dict:
+        row = await self._query_one(
+            """SELECT FILE_HASH, PROVIDER, DESTINATION, ORIGIN_DESTINATION,
+            WORK_ID, LOCAL_PATH, LOCAL_SIZE, UPLOADED_AT
+            FROM upload_data
+            WHERE WORK_ID=?
+            ORDER BY UPLOADED_AT DESC
+            LIMIT 1;""",
+            (work_id,),
+        )
+        return dict(row) if row else {}
 
     async def delete_download_data(self, ids: list | tuple | str):
         if not ids:
@@ -274,17 +431,17 @@ class Database:
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     async def list_douyin_users(self) -> list[dict]:
-        await self.cursor.execute(
+        rows = await self._query_all(
             """SELECT id, sec_user_id, uid, nickname, avatar, cover, has_works, status,
             is_live, has_new_today, auto_update, update_window_start, update_window_end,
             last_live_at, last_new_at, last_fetch_at, created_at, updated_at
             FROM douyin_user
             ORDER BY updated_at DESC;"""
         )
-        return [dict(i) for i in await self.cursor.fetchall()]
+        return [dict(i) for i in rows]
 
     async def count_douyin_users_with_works(self) -> int:
-        await self.cursor.execute(
+        row = await self._query_one(
             """SELECT COUNT(1) AS total
             FROM douyin_user u
             WHERE EXISTS (
@@ -293,7 +450,6 @@ class Database:
                 LIMIT 1
             );"""
         )
-        row = await self.cursor.fetchone()
         return int(row["total"]) if row else 0
 
     async def list_douyin_users_with_works(
@@ -304,7 +460,7 @@ class Database:
         page = max(page, 1)
         page_size = max(page_size, 1)
         offset = (page - 1) * page_size
-        await self.cursor.execute(
+        rows = await self._query_all(
             """SELECT id, sec_user_id, uid, nickname, avatar, cover, has_works, status,
             is_live, has_new_today, auto_update, update_window_start, update_window_end,
             last_live_at, last_new_at, last_fetch_at, created_at, updated_at
@@ -318,11 +474,10 @@ class Database:
             LIMIT ? OFFSET ?;""",
             (page_size, offset),
         )
-        return [dict(i) for i in await self.cursor.fetchall()]
+        return [dict(i) for i in rows]
 
     async def count_douyin_users(self) -> int:
-        await self.cursor.execute("SELECT COUNT(1) AS total FROM douyin_user;")
-        row = await self.cursor.fetchone()
+        row = await self._query_one("SELECT COUNT(1) AS total FROM douyin_user;")
         return int(row["total"]) if row else 0
 
     async def list_douyin_users_paged(
@@ -331,7 +486,7 @@ class Database:
         page = max(page, 1)
         page_size = max(page_size, 1)
         offset = (page - 1) * page_size
-        await self.cursor.execute(
+        rows = await self._query_all(
             """SELECT id, sec_user_id, uid, nickname, avatar, cover, has_works, status,
             is_live, has_new_today, auto_update, update_window_start, update_window_end,
             last_live_at, last_new_at, last_fetch_at, created_at, updated_at
@@ -340,18 +495,18 @@ class Database:
             LIMIT ? OFFSET ?;""",
             (page_size, offset),
         )
-        return [dict(i) for i in await self.cursor.fetchall()]
+        return [dict(i) for i in rows]
 
     async def get_douyin_user(self, sec_user_id: str) -> dict:
-        await self.cursor.execute(
+        row = await self._query_one(
             """SELECT id, sec_user_id, uid, nickname, avatar, cover, has_works, status,
-            is_live, has_new_today, auto_update, update_window_start, update_window_end,
+            is_live, live_width, live_height, has_new_today, auto_update,
+            update_window_start, update_window_end,
             last_live_at, last_new_at, last_fetch_at, created_at, updated_at
             FROM douyin_user
             WHERE sec_user_id=?;""",
             (sec_user_id,),
         )
-        row = await self.cursor.fetchone()
         return dict(row) if row else {}
 
     async def upsert_douyin_user(
@@ -393,7 +548,7 @@ class Database:
             ),
         )
         await self.database.commit()
-        await self.cursor.execute(
+        row = await self._query_one(
             """SELECT id, sec_user_id, uid, nickname, avatar, cover, has_works, status,
             is_live, has_new_today, auto_update, update_window_start, update_window_end,
             last_live_at, last_new_at, last_fetch_at, created_at, updated_at
@@ -401,7 +556,6 @@ class Database:
             WHERE sec_user_id=?;""",
             (sec_user_id,),
         )
-        row = await self.cursor.fetchone()
         return dict(row) if row else {}
 
     async def delete_douyin_user(self, sec_user_id: str) -> None:
@@ -412,11 +566,10 @@ class Database:
         await self.database.commit()
 
     async def delete_douyin_user_with_works(self, sec_user_id: str) -> int:
-        await self.cursor.execute(
+        row = await self._query_one(
             "SELECT COUNT(1) AS total FROM douyin_work WHERE sec_user_id=?;",
             (sec_user_id,),
         )
-        row = await self.cursor.fetchone()
         total = int(row["total"]) if row else 0
         await self.database.execute(
             "DELETE FROM douyin_work WHERE sec_user_id=?;",
@@ -430,14 +583,13 @@ class Database:
         return total
 
     async def delete_orphan_douyin_works(self) -> int:
-        await self.cursor.execute(
+        row = await self._query_one(
             """SELECT COUNT(1) AS total
             FROM douyin_work w
             WHERE NOT EXISTS (
                 SELECT 1 FROM douyin_user u WHERE u.sec_user_id = w.sec_user_id
             );"""
         )
-        row = await self.cursor.fetchone()
         total = int(row["total"]) if row else 0
         if total <= 0:
             return 0
@@ -483,6 +635,277 @@ class Database:
         )
         await self.database.commit()
 
+    async def mark_running_live_records_interrupted(self) -> None:
+        now = self._now_str()
+        await self.database.execute(
+            """UPDATE douyin_live_record
+            SET status='interrupted',
+                ended_at=CASE WHEN ended_at='' THEN ? ELSE ended_at END,
+                updated_at=?
+            WHERE status='running';""",
+            (now, now),
+        )
+        await self.database.commit()
+
+    async def create_douyin_live_record(
+        self,
+        sec_user_id: str,
+        room_id: str,
+        web_rid: str,
+        nickname: str,
+        title: str,
+        stream_url: str,
+        local_root: str,
+        segment_dir: str,
+        output_file: str,
+    ) -> int:
+        now = self._now_str()
+        cursor = await self.database.execute(
+            """INSERT INTO douyin_live_record (
+            sec_user_id,
+            room_id,
+            web_rid,
+            nickname,
+            title,
+            stream_url,
+            local_root,
+            segment_dir,
+            output_file,
+            status,
+            retry_count,
+            error,
+            upload_destination,
+            upload_origin_destination,
+            work_aweme_id,
+            started_at,
+            ended_at,
+            uploaded_at,
+            created_at,
+            updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', 0, '', '', '', '', ?, '', '', ?, ?);""",
+            (
+                sec_user_id,
+                room_id or "",
+                web_rid or "",
+                nickname or "",
+                title or "",
+                stream_url or "",
+                local_root or "",
+                segment_dir or "",
+                output_file or "",
+                now,
+                now,
+                now,
+            ),
+        )
+        await self.database.commit()
+        return int(cursor.lastrowid or 0)
+
+    async def update_douyin_live_record_retry(
+        self,
+        record_id: int,
+        retry_count: int,
+        error: str = "",
+    ) -> None:
+        if not record_id:
+            return
+        await self.database.execute(
+            """UPDATE douyin_live_record
+            SET retry_count=?,
+                error=?,
+                updated_at=?
+            WHERE id=?;""",
+            (
+                max(int(retry_count), 0),
+                error or "",
+                self._now_str(),
+                int(record_id),
+            ),
+        )
+        await self.database.commit()
+
+    async def finish_douyin_live_record(
+        self,
+        record_id: int,
+        status: str,
+        output_file: str,
+        upload_destination: str = "",
+        upload_origin_destination: str = "",
+        work_aweme_id: str = "",
+        error: str = "",
+    ) -> None:
+        if not record_id:
+            return
+        now = self._now_str()
+        await self.database.execute(
+            """UPDATE douyin_live_record
+            SET status=?,
+                output_file=CASE WHEN ?!='' THEN ? ELSE output_file END,
+                upload_destination=CASE WHEN ?!='' THEN ? ELSE upload_destination END,
+                upload_origin_destination=CASE
+                    WHEN ?!='' THEN ? ELSE upload_origin_destination
+                END,
+                work_aweme_id=CASE WHEN ?!='' THEN ? ELSE work_aweme_id END,
+                error=?,
+                ended_at=?,
+                updated_at=?
+            WHERE id=?;""",
+            (
+                status or "finished",
+                output_file or "",
+                output_file or "",
+                upload_destination or "",
+                upload_destination or "",
+                upload_origin_destination or "",
+                upload_origin_destination or "",
+                work_aweme_id or "",
+                work_aweme_id or "",
+                error or "",
+                now,
+                now,
+                int(record_id),
+            ),
+        )
+        await self.database.commit()
+
+    async def update_douyin_work_upload(
+        self,
+        aweme_id: str,
+        status: str,
+        provider: str = "",
+        destination: str = "",
+        origin_destination: str = "",
+        local_path: str = "",
+        message: str = "",
+        mark_downloaded: bool = False,
+        mark_uploaded: bool = False,
+    ) -> None:
+        if not aweme_id:
+            return
+        now = self._now_str()
+        await self.database.execute(
+            """UPDATE douyin_work
+            SET upload_status=?,
+                upload_provider=CASE WHEN ?!='' THEN ? ELSE upload_provider END,
+                upload_destination=CASE WHEN ?!='' THEN ? ELSE upload_destination END,
+                upload_origin_destination=CASE
+                    WHEN ?!='' THEN ? ELSE upload_origin_destination
+                END,
+                local_path=CASE WHEN ?!='' THEN ? ELSE local_path END,
+                upload_message=?,
+                downloaded_at=CASE
+                    WHEN ?=1 THEN ?
+                    WHEN downloaded_at='' AND ?='uploaded' THEN ?
+                    ELSE downloaded_at
+                END,
+                uploaded_at=CASE
+                    WHEN ?=1 THEN ?
+                    WHEN ?='uploaded' THEN ?
+                    ELSE uploaded_at
+                END
+            WHERE aweme_id=?;""",
+            (
+                status or "pending",
+                provider or "",
+                provider or "",
+                destination or "",
+                destination or "",
+                origin_destination or "",
+                origin_destination or "",
+                local_path or "",
+                local_path or "",
+                message or "",
+                1 if mark_downloaded else 0,
+                now,
+                status or "",
+                now,
+                1 if mark_uploaded else 0,
+                now,
+                status or "",
+                now,
+                aweme_id,
+            ),
+        )
+        await self.database.commit()
+
+    async def insert_douyin_live_work(
+        self,
+        sec_user_id: str,
+        aweme_id: str,
+        desc: str,
+        create_ts: int,
+        create_date: str,
+        cover: str,
+        width: int,
+        height: int,
+        upload_status: str,
+        upload_provider: str = "",
+        upload_destination: str = "",
+        upload_origin_destination: str = "",
+        local_path: str = "",
+        uploaded_at: str = "",
+    ) -> None:
+        if not sec_user_id or not aweme_id:
+            return
+        now = self._now_str()
+        await self.database.execute(
+            """INSERT INTO douyin_work (
+                sec_user_id, aweme_id, desc, create_ts, create_date,
+                cover, play_count, width, height, work_type,
+                upload_status, upload_provider, upload_destination,
+                upload_origin_destination, upload_message, local_path,
+                downloaded_at, uploaded_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 'live', ?, ?, ?, ?, '', ?, ?, ?, ?)
+            ON CONFLICT(aweme_id) DO UPDATE SET
+                sec_user_id=excluded.sec_user_id,
+                desc=excluded.desc,
+                create_ts=excluded.create_ts,
+                create_date=excluded.create_date,
+                cover=excluded.cover,
+                width=excluded.width,
+                height=excluded.height,
+                work_type='live',
+                upload_status=excluded.upload_status,
+                upload_provider=excluded.upload_provider,
+                upload_destination=excluded.upload_destination,
+                upload_origin_destination=excluded.upload_origin_destination,
+                local_path=excluded.local_path,
+                downloaded_at=excluded.downloaded_at,
+                uploaded_at=excluded.uploaded_at;""",
+            (
+                sec_user_id,
+                aweme_id,
+                desc or "",
+                int(create_ts or 0),
+                create_date or "",
+                cover or "",
+                int(width or 0),
+                int(height or 0),
+                upload_status or "pending",
+                upload_provider or "",
+                upload_destination or "",
+                upload_origin_destination or "",
+                local_path or "",
+                now,
+                uploaded_at or "",
+                now,
+            ),
+        )
+        await self.database.commit()
+
+    async def mark_douyin_live_record_uploaded(self, record_id: int) -> None:
+        if not record_id:
+            return
+        now = self._now_str()
+        await self.database.execute(
+            """UPDATE douyin_live_record
+            SET uploaded_at=?,
+                updated_at=?
+            WHERE id=?;""",
+            (now, now, int(record_id)),
+        )
+        await self.database.commit()
+
     async def update_douyin_work_size(
         self,
         aweme_id: str,
@@ -496,6 +919,54 @@ class Database:
             (int(width), int(height), aweme_id),
         )
         await self.database.commit()
+
+    async def clear_douyin_work_local_path(self, aweme_id: str) -> None:
+        if not aweme_id:
+            return
+        await self.database.execute(
+            "UPDATE douyin_work SET local_path='' WHERE aweme_id=?;",
+            (aweme_id,),
+        )
+        await self.database.commit()
+
+    async def set_douyin_work_local_path(self, aweme_id: str, local_path: str) -> None:
+        if not aweme_id or not local_path:
+            return
+        await self.database.execute(
+            "UPDATE douyin_work SET local_path=? WHERE aweme_id=?;",
+            (str(local_path), aweme_id),
+        )
+        await self.database.commit()
+
+    async def get_latest_douyin_live_record_output(self, work_aweme_id: str) -> str:
+        if not work_aweme_id:
+            return ""
+        row = await self._query_one(
+            """SELECT output_file
+            FROM douyin_live_record
+            WHERE work_aweme_id=?
+              AND output_file!=''
+            ORDER BY id DESC
+            LIMIT 1;""",
+            (work_aweme_id,),
+        )
+        if not row:
+            return ""
+        return str(row[0] or "").strip()
+
+    async def get_douyin_work(self, aweme_id: str) -> dict:
+        row = await self._query_one(
+            """SELECT sec_user_id, aweme_id, desc, create_ts, create_date,
+            cover, play_count, width, height, work_type,
+            upload_status, upload_provider, upload_destination,
+            upload_origin_destination, upload_message, local_path,
+            downloaded_at, uploaded_at
+            FROM douyin_work
+            WHERE aweme_id=?
+            LIMIT 1;""",
+            (aweme_id,),
+        )
+        return dict(row) if row else {}
 
     async def update_douyin_user_new(
         self,
@@ -595,14 +1066,15 @@ class Database:
         await self.database.commit()
 
     async def list_douyin_users_auto_update(self) -> list[dict]:
-        await self.cursor.execute(
+        rows = await self._query_all(
             """SELECT id, sec_user_id, uid, nickname, avatar, cover, has_works, status,
             is_live, has_new_today, auto_update, update_window_start, update_window_end,
             last_live_at, last_new_at, last_fetch_at, created_at, updated_at
             FROM douyin_user
+            WHERE auto_update=1
             ORDER BY updated_at DESC;"""
         )
-        return [dict(i) for i in await self.cursor.fetchall()]
+        return [dict(i) for i in rows]
 
     async def insert_douyin_works(self, works: list[dict]) -> int:
         if not works:
@@ -644,17 +1116,24 @@ class Database:
         await self.database.commit()
         return inserted
 
-    async def count_douyin_works_today(self, date_str: str) -> int:
-        await self.cursor.execute(
-            """SELECT COUNT(1) AS total
+    async def count_douyin_works_today(
+        self,
+        date_str: str,
+        work_types: tuple[str, ...] | None = None,
+    ) -> int:
+        params: list = [date_str]
+        sql = """SELECT COUNT(1) AS total
             FROM douyin_work w
             WHERE w.create_date=?
             AND EXISTS (
                 SELECT 1 FROM douyin_user u WHERE u.sec_user_id = w.sec_user_id
-            );""",
-            (date_str,),
-        )
-        row = await self.cursor.fetchone()
+            )"""
+        if work_types:
+            placeholders = ",".join(["?"] * len(work_types))
+            sql += f"\n            AND w.work_type IN ({placeholders})"
+            params.extend(work_types)
+        sql += ";"
+        row = await self._query_one(sql, tuple(params))
         return int(row["total"]) if row else 0
 
     async def count_douyin_user_works_today(
@@ -662,14 +1141,13 @@ class Database:
         sec_user_id: str,
         date_str: str,
     ) -> int:
-        await self.cursor.execute(
+        row = await self._query_one(
             """SELECT COUNT(1) AS total
             FROM douyin_work w
             JOIN douyin_user u ON w.sec_user_id = u.sec_user_id
             WHERE w.create_date=? AND w.sec_user_id=?;""",
             (date_str, sec_user_id),
         )
-        row = await self.cursor.fetchone()
         return int(row["total"]) if row else 0
 
     async def list_douyin_works_today(
@@ -677,24 +1155,31 @@ class Database:
         date_str: str,
         page: int,
         page_size: int,
+        work_types: tuple[str, ...] | None = None,
     ) -> list[dict]:
         page = max(page, 1)
         page_size = max(page_size, 1)
         offset = (page - 1) * page_size
-        await self.cursor.execute(
-            """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
+        params: list = [date_str]
+        sql = """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
             w.cover, w.play_count, w.width, w.height, w.work_type,
+            w.upload_status, w.upload_provider, w.upload_destination,
+            w.upload_origin_destination, w.upload_message, w.local_path,
+            w.downloaded_at, w.uploaded_at,
             COALESCE(u.nickname, '') AS nickname,
             COALESCE(u.avatar, '') AS avatar,
             COALESCE(u.uid, '') AS uid
             FROM douyin_work w
             JOIN douyin_user u ON w.sec_user_id = u.sec_user_id
-            WHERE w.create_date=?
-            ORDER BY w.create_ts DESC
-            LIMIT ? OFFSET ?;""",
-            (date_str, page_size, offset),
-        )
-        return [dict(i) for i in await self.cursor.fetchall()]
+            WHERE w.create_date=?"""
+        if work_types:
+            placeholders = ",".join(["?"] * len(work_types))
+            sql += f"\n            AND w.work_type IN ({placeholders})"
+            params.extend(work_types)
+        sql += "\n            ORDER BY w.create_ts DESC\n            LIMIT ? OFFSET ?;"
+        params.extend((page_size, offset))
+        rows = await self._query_all(sql, tuple(params))
+        return [dict(i) for i in rows]
 
     async def list_douyin_user_works_today(
         self,
@@ -706,9 +1191,12 @@ class Database:
         page = max(page, 1)
         page_size = min(max(page_size, 1), 100)
         offset = (page - 1) * page_size
-        await self.cursor.execute(
+        rows = await self._query_all(
             """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
             w.cover, w.play_count, w.width, w.height, w.work_type,
+            w.upload_status, w.upload_provider, w.upload_destination,
+            w.upload_origin_destination, w.upload_message, w.local_path,
+            w.downloaded_at, w.uploaded_at,
             COALESCE(u.nickname, '') AS nickname,
             COALESCE(u.avatar, '') AS avatar,
             COALESCE(u.uid, '') AS uid
@@ -719,17 +1207,24 @@ class Database:
             LIMIT ? OFFSET ?;""",
             (date_str, sec_user_id, page_size, offset),
         )
-        return [dict(i) for i in await self.cursor.fetchall()]
+        return [dict(i) for i in rows]
 
-    async def count_douyin_user_works(self, sec_user_id: str) -> int:
-        await self.cursor.execute(
-            """SELECT COUNT(1) AS total
+    async def count_douyin_user_works(
+        self,
+        sec_user_id: str,
+        work_types: tuple[str, ...] | None = None,
+    ) -> int:
+        params: list = [sec_user_id]
+        sql = """SELECT COUNT(1) AS total
             FROM douyin_work w
             JOIN douyin_user u ON w.sec_user_id = u.sec_user_id
-            WHERE w.sec_user_id=?;""",
-            (sec_user_id,),
-        )
-        row = await self.cursor.fetchone()
+            WHERE w.sec_user_id=?"""
+        if work_types:
+            placeholders = ",".join(["?"] * len(work_types))
+            sql += f"\n            AND w.work_type IN ({placeholders})"
+            params.extend(work_types)
+        sql += ";"
+        row = await self._query_one(sql, tuple(params))
         return int(row["total"]) if row else 0
 
     async def list_douyin_user_works(
@@ -737,28 +1232,54 @@ class Database:
         sec_user_id: str,
         page: int,
         page_size: int,
+        work_types: tuple[str, ...] | None = None,
     ) -> list[dict]:
         page = max(page, 1)
         page_size = min(max(page_size, 1), 100)
         offset = (page - 1) * page_size
-        await self.cursor.execute(
-            """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
+        params: list = [sec_user_id]
+        sql = """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
             w.cover, w.play_count, w.width, w.height, w.work_type,
+            w.upload_status, w.upload_provider, w.upload_destination,
+            w.upload_origin_destination, w.upload_message, w.local_path,
+            w.downloaded_at, w.uploaded_at,
             COALESCE(u.nickname, '') AS nickname,
             COALESCE(u.avatar, '') AS avatar,
             COALESCE(u.uid, '') AS uid
             FROM douyin_work w
             JOIN douyin_user u ON w.sec_user_id = u.sec_user_id
-            WHERE w.sec_user_id=?
-            ORDER BY w.create_ts DESC
-            LIMIT ? OFFSET ?;""",
-            (sec_user_id, page_size, offset),
+            WHERE w.sec_user_id=?"""
+        if work_types:
+            placeholders = ",".join(["?"] * len(work_types))
+            sql += f"\n            AND w.work_type IN ({placeholders})"
+            params.extend(work_types)
+        sql += "\n            ORDER BY w.create_ts DESC\n            LIMIT ? OFFSET ?;"
+        params.extend((page_size, offset))
+        rows = await self._query_all(sql, tuple(params))
+        return [dict(i) for i in rows]
+
+    async def list_douyin_user_pending_works(
+        self,
+        sec_user_id: str,
+        limit: int = 200,
+    ) -> list[dict]:
+        sec_user_id = (sec_user_id or "").strip()
+        if not sec_user_id:
+            return []
+        limit = min(max(int(limit or 1), 1), 500)
+        rows = await self._query_all(
+            """SELECT aweme_id, work_type, upload_status
+            FROM douyin_work
+            WHERE sec_user_id=?
+              AND (upload_status='' OR upload_status='pending' OR upload_status='failed')
+            ORDER BY create_ts DESC
+            LIMIT ?;""",
+            (sec_user_id, limit),
         )
-        return [dict(i) for i in await self.cursor.fetchall()]
+        return [dict(i) for i in rows]
 
     async def count_douyin_works_all(self) -> int:
-        await self.cursor.execute("SELECT COUNT(1) AS total FROM douyin_work;")
-        row = await self.cursor.fetchone()
+        row = await self._query_one("SELECT COUNT(1) AS total FROM douyin_work;")
         return int(row["total"]) if row else 0
 
     async def list_douyin_works_all(
@@ -769,9 +1290,12 @@ class Database:
         page = max(page, 1)
         page_size = min(max(page_size, 1), 100)
         offset = (page - 1) * page_size
-        await self.cursor.execute(
+        rows = await self._query_all(
             """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
             w.cover, w.play_count, w.width, w.height, w.work_type,
+            w.upload_status, w.upload_provider, w.upload_destination,
+            w.upload_origin_destination, w.upload_message, w.local_path,
+            w.downloaded_at, w.uploaded_at,
             COALESCE(u.nickname, '') AS nickname,
             COALESCE(u.avatar, '') AS avatar,
             COALESCE(u.uid, '') AS uid
@@ -781,15 +1305,14 @@ class Database:
             LIMIT ? OFFSET ?;""",
             (page_size, offset),
         )
-        return [dict(i) for i in await self.cursor.fetchall()]
+        return [dict(i) for i in rows]
 
     async def count_douyin_live_today(self, date_str: str) -> int:
-        await self.cursor.execute(
+        row = await self._query_one(
             """SELECT COUNT(1) AS total FROM douyin_user
             WHERE is_live=1 AND substr(last_live_at, 1, 10)=?;""",
             (date_str,),
         )
-        row = await self.cursor.fetchone()
         return int(row["total"]) if row else 0
 
     async def list_douyin_live_today(
@@ -801,7 +1324,7 @@ class Database:
         page = max(page, 1)
         page_size = max(page_size, 1)
         offset = (page - 1) * page_size
-        await self.cursor.execute(
+        rows = await self._query_all(
             """SELECT id, sec_user_id,
             COALESCE(uid, '') AS uid,
             COALESCE(nickname, '') AS nickname,
@@ -815,11 +1338,10 @@ class Database:
             LIMIT ? OFFSET ?;""",
             (date_str, page_size, offset),
         )
-        return [dict(i) for i in await self.cursor.fetchall()]
+        return [dict(i) for i in rows]
 
     async def count_douyin_playlists(self) -> int:
-        await self.cursor.execute("SELECT COUNT(1) AS total FROM douyin_playlist;")
-        row = await self.cursor.fetchone()
+        row = await self._query_one("SELECT COUNT(1) AS total FROM douyin_playlist;")
         return int(row["total"]) if row else 0
 
     async def list_douyin_playlists(
@@ -830,7 +1352,7 @@ class Database:
         page = max(page, 1)
         page_size = min(max(page_size, 1), 100)
         offset = (page - 1) * page_size
-        await self.cursor.execute(
+        rows = await self._query_all(
             """SELECT p.id, p.name, p.created_at, p.updated_at,
             COUNT(pi.id) AS item_count
             FROM douyin_playlist p
@@ -840,10 +1362,10 @@ class Database:
             LIMIT ? OFFSET ?;""",
             (page_size, offset),
         )
-        return [dict(i) for i in await self.cursor.fetchall()]
+        return [dict(i) for i in rows]
 
     async def get_douyin_playlist(self, playlist_id: int) -> dict:
-        await self.cursor.execute(
+        row = await self._query_one(
             """SELECT p.id, p.name, p.created_at, p.updated_at,
             COUNT(pi.id) AS item_count
             FROM douyin_playlist p
@@ -852,7 +1374,6 @@ class Database:
             GROUP BY p.id;""",
             (playlist_id,),
         )
-        row = await self.cursor.fetchone()
         return dict(row) if row else {}
 
     async def create_douyin_playlist(self, name: str) -> dict:
@@ -919,13 +1440,12 @@ class Database:
         return inserted
 
     async def count_douyin_playlist_items(self, playlist_id: int) -> int:
-        await self.cursor.execute(
+        row = await self._query_one(
             """SELECT COUNT(1) AS total
             FROM douyin_playlist_item
             WHERE playlist_id=?;""",
             (playlist_id,),
         )
-        row = await self.cursor.fetchone()
         return int(row["total"]) if row else 0
 
     async def list_douyin_playlist_items(
@@ -937,9 +1457,12 @@ class Database:
         page = max(page, 1)
         page_size = min(max(page_size, 1), 100)
         offset = (page - 1) * page_size
-        await self.cursor.execute(
+        rows = await self._query_all(
             """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
             w.cover, w.play_count, w.width, w.height, w.work_type,
+            w.upload_status, w.upload_provider, w.upload_destination,
+            w.upload_origin_destination, w.upload_message, w.local_path,
+            w.downloaded_at, w.uploaded_at,
             COALESCE(u.nickname, '') AS nickname,
             COALESCE(u.avatar, '') AS avatar,
             COALESCE(u.uid, '') AS uid
@@ -951,7 +1474,7 @@ class Database:
             LIMIT ? OFFSET ?;""",
             (playlist_id, page_size, offset),
         )
-        return [dict(i) for i in await self.cursor.fetchall()]
+        return [dict(i) for i in rows]
 
     async def list_douyin_playlist_item_ids(
         self,
@@ -961,13 +1484,12 @@ class Database:
         if not aweme_ids:
             return []
         placeholders = ",".join(["?"] * len(aweme_ids))
-        await self.cursor.execute(
+        rows = await self._query_all(
             f"""SELECT aweme_id
             FROM douyin_playlist_item
             WHERE playlist_id=? AND aweme_id IN ({placeholders});""",
             (playlist_id, *aweme_ids),
         )
-        rows = await self.cursor.fetchall()
         return [row["aweme_id"] for row in rows]
 
     async def delete_douyin_playlist_items(
@@ -994,11 +1516,10 @@ class Database:
         return removed
 
     async def get_douyin_schedule(self) -> dict:
-        await self.cursor.execute(
+        row = await self._query_one(
             """SELECT id, enabled, times_text, updated_at
             FROM douyin_schedule WHERE id=1;"""
         )
-        row = await self.cursor.fetchone()
         return dict(row) if row else {}
 
     async def upsert_douyin_schedule(
@@ -1029,7 +1550,7 @@ class Database:
         status: str | None = None,
     ) -> list[dict]:
         if status:
-            await self.cursor.execute(
+            rows = await self._query_all(
                 """SELECT id, account, cookie, cookie_hash, status, fail_count,
                 last_used_at, last_failed_at, created_at, updated_at
                 FROM douyin_cookie
@@ -1038,13 +1559,13 @@ class Database:
                 (status,),
             )
         else:
-            await self.cursor.execute(
+            rows = await self._query_all(
                 """SELECT id, account, cookie, cookie_hash, status, fail_count,
                 last_used_at, last_failed_at, created_at, updated_at
                 FROM douyin_cookie
                 ORDER BY updated_at DESC;"""
             )
-        return [dict(i) for i in await self.cursor.fetchall()]
+        return [dict(i) for i in rows]
 
     async def upsert_douyin_cookie(
         self,
@@ -1067,14 +1588,13 @@ class Database:
             (account, cookie, cookie_hash, now, now),
         )
         await self.database.commit()
-        await self.cursor.execute(
+        row = await self._query_one(
             """SELECT id, account, cookie, cookie_hash, status, fail_count,
             last_used_at, last_failed_at, created_at, updated_at
             FROM douyin_cookie
             WHERE cookie_hash=?;""",
             (cookie_hash,),
         )
-        row = await self.cursor.fetchone()
         return dict(row) if row else {}
 
     async def mark_douyin_cookie_expired(self, cookie_id: int) -> None:

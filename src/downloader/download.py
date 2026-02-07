@@ -23,6 +23,7 @@ from ..custom import (
     MAX_WORKERS,
     PROGRESS,
 )
+from ..uploader import UploadService
 from ..tools import (
     CacheError,
     DownloaderError,
@@ -85,6 +86,11 @@ class Downloader:
         self.chunk = params.chunk
         self.max_retry = params.max_retry
         self.recorder = params.recorder
+        self.upload_metadata: dict[str, dict] = {}
+        self.uploader = UploadService(
+            params,
+            metadata_resolver=self.get_upload_metadata_by_id,
+        )
         self.timeout = params.timeout
         self.ffmpeg = params.ffmpeg
         self.cache = params.cache
@@ -92,6 +98,22 @@ class Downloader:
         self.general_progress_object: Callable = self.init_general_progress(
             server_mode,
         )
+
+    def get_upload_metadata_by_id(self, work_id: str) -> dict | None:
+        return self.upload_metadata.get(str(work_id or ""))
+
+    def cache_upload_metadata(
+        self,
+        item: dict,
+        raw_desc: str = "",
+    ) -> None:
+        if not (work_id := str(item.get("id", "")).strip()):
+            return
+        self.upload_metadata[work_id] = {
+            "title": str(raw_desc or item.get("desc", "")).strip(),
+            "author": str(item.get("nickname", "")).strip(),
+            "publish_date": item.get("create_time", ""),
+        }
 
     def init_general_progress(
         self,
@@ -299,6 +321,8 @@ class Downloader:
         )
         tasks = []
         for item in data:
+            raw_desc = item.get("desc", "")
+            self.cache_upload_metadata(item, raw_desc)
             item["desc"] = beautify_string(
                 item["desc"],
                 self.desc_length,
@@ -342,7 +366,10 @@ class Downloader:
                 **params,
                 type=_("音乐"),
             )
-            self.download_cover(**params)
+            self.download_cover(
+                **params,
+                force_static=t in (_("视频"), _("实况")),
+            )
         await self.downloader_chart(
             tasks, count, self.general_progress_object(), **kwargs
         )
@@ -528,14 +555,16 @@ class Downloader:
         item: SimpleNamespace,
         temp_root: Path,
         actual_root: Path,
+        force_static: bool = False,
         static_suffix: str = "jpeg",
         dynamic_suffix: str = "webp",
         **kwargs,
     ) -> None:
+        static_enabled = force_static or self.static_cover
         if all(
             (
-                self.static_cover,
-                url := item["static_cover"],
+                static_enabled,
+                url := item.get("static_cover", ""),
                 not self.is_exists(
                     p := actual_root.with_name(f"{name}.{static_suffix}")
                 ),
@@ -554,7 +583,7 @@ class Downloader:
         if all(
             (
                 self.dynamic_cover,
-                url := item["dynamic_cover"],
+                url := item.get("dynamic_cover", ""),
                 not self.is_exists(
                     p := actual_root.with_name(f"{name}.{dynamic_suffix}")
                 ),
@@ -580,6 +609,14 @@ class Downloader:
         """未传入 switch 参数则判断音乐下载开关设置"""
         return all((switch or self.music, url, not self.is_exists(path)))
 
+    def _can_track_work_upload(self, id_: str, suffix: str) -> bool:
+        if not id_:
+            return False
+        if not str(id_).isdigit():
+            return False
+        normalize = str(suffix or "").strip().lower().lstrip(".")
+        return normalize in self.uploader.video_suffixes
+
     @Retry.retry
     async def request_file(
         self,
@@ -598,6 +635,9 @@ class Downloader:
     ) -> bool | None:
         async with semaphore or self.semaphore:
             client = self.client_tiktok if tiktok else self.client
+            track_work_upload = self._can_track_work_upload(id_, suffix)
+            if track_work_upload:
+                await self.uploader.recorder.mark_work_downloading(id_)
             headers = self.__adapter_headers(
                 headers,
                 tiktok,
@@ -644,6 +684,7 @@ class Downloader:
                                 ),
                                 show,
                                 id_,
+                                suffix,
                                 response,
                                 length,
                                 position,
@@ -658,6 +699,11 @@ class Downloader:
                             raise DownloaderError
             except RequestError as e:
                 self.log.warning(_("网络异常: {error_repr}").format(error_repr=repr(e)))
+                if track_work_upload:
+                    await self.uploader.recorder.mark_work_upload_failed(
+                        id_,
+                        f"下载失败: {repr(e)}",
+                    )
                 return False
             except HTTPStatusError as e:
                 self.log.warning(
@@ -668,10 +714,20 @@ class Downloader:
                         "如果 TikTok 平台作品下载功能异常，请检查配置文件中 browser_info_tiktok 的 device_id 参数！"
                     ),
                 )
+                if track_work_upload:
+                    await self.uploader.recorder.mark_work_upload_failed(
+                        id_,
+                        f"下载失败: {repr(e)}",
+                    )
                 return False
             except CacheError as e:
                 self.delete(temp)
                 self.log.error(str(e))
+                if track_work_upload:
+                    await self.uploader.recorder.mark_work_upload_failed(
+                        id_,
+                        f"下载失败: {str(e)}",
+                    )
                 return False
             except Exception as e:
                 self.log.error(
@@ -681,6 +737,11 @@ class Downloader:
                 )
                 self.log.error(f"URL: {url}", False)
                 self.log.error(f"Headers: {headers}", False)
+                if track_work_upload:
+                    await self.uploader.recorder.mark_work_upload_failed(
+                        id_,
+                        f"下载失败: {repr(e)}",
+                    )
                 return False
 
     async def download_file(
@@ -689,6 +750,7 @@ class Downloader:
         actual: Path,
         show: str,
         id_: str,
+        suffix: str,
         response,
         content: int,
         position: int,
@@ -716,10 +778,40 @@ class Downloader:
             )
             # self.delete_file(cache)
             await self.recorder.delete_id(id_)
+            if self._can_track_work_upload(id_, suffix):
+                await self.uploader.recorder.mark_work_upload_failed(
+                    id_,
+                    f"下载中断: {repr(e)}",
+                )
             return False
         self.save_file(cache, actual)
         self.log.info(_("{show} 文件下载成功").format(show=show))
         self.log.info(f"文件路径 {actual.resolve()}", False)
+        track_work_upload = self._can_track_work_upload(id_, suffix)
+        if track_work_upload:
+            await self.uploader.recorder.mark_work_downloaded(
+                id_,
+                str(actual.resolve()),
+            )
+            if self.uploader._should_upload(suffix):
+                await self.uploader.recorder.mark_work_uploading(
+                    id_,
+                    str(actual.resolve()),
+                )
+        upload_outcome = await self.uploader.upload_file(actual, suffix, id_)
+        if track_work_upload:
+            if upload_outcome.attempted and not upload_outcome.success:
+                await self.uploader.recorder.mark_work_upload_failed(
+                    id_,
+                    upload_outcome.reason or "上传失败",
+                    str(actual.resolve()),
+                )
+        if self.uploader.should_delete_local(upload_outcome):
+            self.uploader.delete_local_file(actual)
+            for cover_suffix in ("jpeg", "jpg", "webp", "png"):
+                self.uploader.delete_local_file(
+                    actual.with_suffix(f".{cover_suffix}")
+                )
         await self.recorder.update_id(id_)
         self.add_count(show, id_, count)
         return True
