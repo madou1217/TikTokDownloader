@@ -351,6 +351,7 @@ class Downloader:
                 await self.download_video(
                     **params,
                     type_=_("视频"),
+                    tiktok=tiktok,
                     skipped=count.skipped_video,
                 )
             elif t == _("实况"):
@@ -419,6 +420,88 @@ class Downloader:
     async def is_skip(self, id_: str, path: Path) -> bool:
         return await self.is_downloaded(id_) or self.is_exists(path)
 
+    @staticmethod
+    def _pick_download_url(urls: str | list | tuple) -> str:
+        if isinstance(urls, str):
+            return urls
+        if isinstance(urls, (list, tuple)) and urls:
+            return str(urls[0] or "")
+        return ""
+
+    async def _get_remote_size(
+        self,
+        url: str,
+        suffix: str,
+        tiktok: bool = False,
+    ) -> int | None:
+        if not url:
+            return None
+        client = self.client_tiktok if tiktok else self.client
+        headers = self.__adapter_headers({}, tiktok)
+        try:
+            length, _ = await self.__head_file(client, url, headers, suffix)
+            if length:
+                return length
+        except Exception as error:
+            self.log.warning(f"HEAD 获取文件大小失败: {repr(error)}")
+        try:
+            headers = self.__adapter_headers({}, tiktok)
+            headers["Range"] = "bytes=0-0"
+            async with client.stream("GET", url, headers=headers) as response:
+                response.raise_for_status()
+                content_range = response.headers.get("Content-Range", "")
+                if "/" in content_range:
+                    total = content_range.split("/")[-1].strip()
+                    if total.isdigit():
+                        return int(total)
+                length = response.headers.get("Content-Length", "")
+                return int(length) if str(length).isdigit() else None
+        except Exception as error:
+            self.log.warning(f"Range 获取文件大小失败: {repr(error)}")
+        return None
+
+    async def _is_video_complete(
+        self,
+        id_: str,
+        path: Path,
+        downloads: str | list | tuple,
+        suffix: str,
+        tiktok: bool = False,
+    ) -> bool:
+        if not path.exists():
+            if await self.is_downloaded(id_):
+                await self.recorder.delete_id(id_)
+            return False
+        local_size = path.stat().st_size
+        url = self._pick_download_url(downloads)
+        remote_size = await self._get_remote_size(url, suffix, tiktok)
+        if remote_size:
+            if local_size == remote_size:
+                return True
+            await self.recorder.delete_id(id_)
+            self.log.warning(
+                _(
+                    "文件大小不一致，准备重新下载: {file_name} 预期 {expected} 实际 {actual}"
+                ).format(
+                    file_name=path.name,
+                    expected=format_size(remote_size),
+                    actual=format_size(local_size),
+                )
+            )
+            return False
+        if local_size < 1024 * 512:
+            await self.recorder.delete_id(id_)
+            self.log.warning(
+                _(
+                    "文件过小，可能未完整下载，准备重新下载: {file_name} 实际 {actual}"
+                ).format(
+                    file_name=path.name,
+                    actual=format_size(local_size),
+                )
+            )
+            return False
+        return True
+
     async def download_image(
         self,
         tasks: list,
@@ -481,6 +564,7 @@ class Downloader:
         actual_root: Path,
         suffix: str = "mp4",
         type_: str = _("视频"),
+        tiktok: bool = False,
     ) -> None:
         if not item["downloads"]:
             self.log.error(
@@ -489,20 +573,28 @@ class Downloader:
                 )
             )
             return
-        if await self.is_skip(
-            id_,
-            p := actual_root.with_name(
-                f"{name}.{suffix}",
-            ),
-        ):
+        p = actual_root.with_name(f"{name}.{suffix}")
+        if await self.is_downloaded(id_) or self.is_exists(p):
+            if await self._is_video_complete(
+                id_,
+                p,
+                item["downloads"],
+                suffix,
+                tiktok,
+            ):
+                self.log.info(
+                    _("【{type}】{name} 存在下载记录或文件已存在，跳过下载").format(
+                        type=type_, name=name
+                    )
+                )
+                self.log.info(f"文件路径: {p.resolve()}", False)
+                skipped.add(id_)
+                return
             self.log.info(
-                _("【{type}】{name} 存在下载记录或文件已存在，跳过下载").format(
+                _("【{type}】{name} 检测到文件不完整，准备重新下载").format(
                     type=type_, name=name
                 )
             )
-            self.log.info(f"文件路径: {p.resolve()}", False)
-            skipped.add(id_)
-            return
         tasks.append(
             (
                 item["downloads"],
@@ -784,6 +876,19 @@ class Downloader:
                     f"下载中断: {repr(e)}",
                 )
             return False
+        if content:
+            actual_size = cache.stat().st_size if cache.exists() else 0
+            if actual_size != content:
+                self.log.warning(
+                    _(
+                        "{show} 下载不完整，预期 {expected}，实际 {actual}，将进行重试"
+                    ).format(
+                        show=show,
+                        expected=format_size(content),
+                        actual=format_size(actual_size),
+                    )
+                )
+                return False
         self.save_file(cache, actual)
         self.log.info(_("{show} 文件下载成功").format(show=show))
         self.log.info(f"文件路径 {actual.resolve()}", False)
