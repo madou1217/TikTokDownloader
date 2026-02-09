@@ -760,6 +760,38 @@ a.ghost {
   color: rgba(255, 255, 255, 0.92);
 }
 
+.sync-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.92);
+  width: fit-content;
+}
+
+.sync-progress.status-queued,
+.sync-progress.status-running {
+  background: rgba(14, 165, 233, 0.22);
+  color: #e0f2fe;
+}
+
+.sync-progress.status-done {
+  background: rgba(16, 185, 129, 0.22);
+  color: #d1fae5;
+}
+
+.sync-progress.status-failed {
+  background: rgba(239, 68, 68, 0.22);
+  color: #fee2e2;
+}
+
+.sync-progress.status-idle {
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.92);
+}
+
 .live-card {
   background: linear-gradient(160deg, rgba(12, 12, 20, 0.96), rgba(18, 18, 26, 0.86));
   color: #f1f1ef;

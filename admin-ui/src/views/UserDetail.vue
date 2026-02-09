@@ -23,6 +23,14 @@
         </button>
         <button
           class="ghost"
+          :disabled="state.loading.fullSync || isFullSyncRunning"
+          @click="triggerFullSync"
+        >
+          <span v-if="state.loading.fullSync" class="spinner dark"></span>
+          {{ state.loading.fullSync ? "同步中..." : "同步历史作品" }}
+        </button>
+        <button
+          class="ghost"
           type="button"
           @click="toggleAutoDownload"
         >
@@ -84,6 +92,13 @@
 
         <div class="profile-meta">
           <span>用户ID <span class="mono">{{ state.user.uid || "-" }}</span></span>
+          <span
+            class="sync-progress"
+            :class="`status-${fullSyncStatus}`"
+            :title="fullSyncHint"
+          >
+            历史同步: {{ fullSyncText }}
+          </span>
         </div>
 
         <div v-if="state.showInfo" class="info-popover">
@@ -308,6 +323,7 @@ const route = useRoute();
 const state = reactive({
   user: {},
   liveInfo: {},
+  fullSync: {},
   works: {
     items: [],
     total: 0,
@@ -319,6 +335,7 @@ const state = reactive({
   loading: {
     fetch: false,
     live: false,
+    fullSync: false,
   },
   showInfo: false,
 });
@@ -388,6 +405,45 @@ const formatStatus = (value) => {
 const nextAutoUpdateText = computed(
   () => state.user.next_auto_update_at || "-"
 );
+const fullSyncStatus = computed(() => state.fullSync?.status || "idle");
+const isFullSyncRunning = computed(() =>
+  ["queued", "running"].includes(fullSyncStatus.value)
+);
+const fullSyncText = computed(() => {
+  const status = fullSyncStatus.value;
+  if (status === "running") {
+    return `进行中（页 ${state.fullSync.pages || 0}，作品 ${state.fullSync.works || 0}，入库 ${state.fullSync.stored || 0}）`;
+  }
+  if (status === "queued") {
+    return "排队中";
+  }
+  if (status === "done") {
+    return `已完成（页 ${state.fullSync.pages || 0}，作品 ${state.fullSync.works || 0}，入库 ${state.fullSync.stored || 0}）`;
+  }
+  if (status === "failed") {
+    return "失败";
+  }
+  return "未同步";
+});
+const fullSyncHint = computed(() => {
+  if (!state.fullSync) {
+    return "";
+  }
+  const pieces = [];
+  if (state.fullSync.started_at) {
+    pieces.push(`开始: ${state.fullSync.started_at}`);
+  }
+  if (state.fullSync.updated_at) {
+    pieces.push(`更新: ${state.fullSync.updated_at}`);
+  }
+  if (state.fullSync.finished_at) {
+    pieces.push(`结束: ${state.fullSync.finished_at}`);
+  }
+  if (state.fullSync.error) {
+    pieces.push(`错误: ${state.fullSync.error}`);
+  }
+  return pieces.join(" | ");
+});
 const clientUserUrl = computed(() => {
   if (!userId.value) {
     return "/client-ui/";
@@ -566,6 +622,17 @@ const loadUser = async () => {
   }
 };
 
+const loadFullSyncProgress = async () => {
+  try {
+    const data = await apiRequest(
+      `/admin/douyin/users/${encodeURIComponent(userId.value)}/full-sync`
+    );
+    state.fullSync = data.data || {};
+  } catch (error) {
+    setAlert("error", error.message);
+  }
+};
+
 const loadWorks = async (page, append = false) => {
   if (!append) {
     state.works.loading = true;
@@ -663,6 +730,37 @@ const fetchTodayData = async () => {
   }
 };
 
+const pollFullSyncProgress = async (rounds = 30, intervalMs = 4000) => {
+  for (let i = 0; i < rounds; i += 1) {
+    await loadFullSyncProgress();
+    if (!isFullSyncRunning.value) {
+      return;
+    }
+    await sleep(intervalMs);
+  }
+};
+
+const triggerFullSync = async () => {
+  if (!userId.value) {
+    return;
+  }
+  state.loading.fullSync = true;
+  try {
+    await apiRequest(
+      `/admin/douyin/users/${encodeURIComponent(userId.value)}/full-sync`,
+      { method: "POST" }
+    );
+    await loadFullSyncProgress();
+    await pollFullSyncProgress();
+    await reloadWorks();
+    setAlert("success", "已触发同步");
+  } catch (error) {
+    setAlert("error", error.message);
+  } finally {
+    state.loading.fullSync = false;
+  }
+};
+
 const toggleAutoDownload = async () => {
   if (!userId.value) {
     return;
@@ -701,6 +799,10 @@ onMounted(async () => {
   await loadUser();
   await reloadWorks();
   await loadLiveCache();
+  await loadFullSyncProgress();
+  if (isFullSyncRunning.value) {
+    await pollFullSyncProgress();
+  }
 });
 
 watch(
@@ -709,10 +811,12 @@ watch(
     state.works.items = [];
     state.works.page = 1;
     state.liveInfo = {};
+    state.fullSync = {};
     state.showInfo = false;
     await loadUser();
     await reloadWorks();
     await loadLiveCache();
+    await loadFullSyncProgress();
   }
 );
 </script>

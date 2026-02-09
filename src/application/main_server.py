@@ -107,6 +107,8 @@ class APIServer(TikTok):
     STREAM_LIVE_PREFIX_TTL = 90
     CLIENT_FEED_WORK_TYPES = ("video", "note", "live")
     DOWNLOADABLE_WORK_TYPES = ("video", "note")
+    USER_FULL_SYNC_PAGE_COUNT = 50
+    USER_FULL_SYNC_MAX_PAGES = 500
 
     def __init__(
         self,
@@ -134,6 +136,8 @@ class APIServer(TikTok):
         self._live_monitor_task = None
         self._live_refreshing = set()
         self._auto_downloading = set()
+        self._user_full_syncing = set()
+        self._user_full_sync_progress = {}
         self.live_recorder = DouyinLiveRecorder(parameter, database)
 
     @staticmethod
@@ -1903,6 +1907,211 @@ class APIServer(TikTok):
 
         await asyncio.gather(*(probe(item) for item in works))
 
+    async def _store_account_work_items(
+        self,
+        sec_user_id: str,
+        work_items: list[dict],
+    ) -> tuple[int, int]:
+        if not sec_user_id or not work_items:
+            return 0, 0
+        works = [self._extract_work_brief(item, sec_user_id) for item in work_items]
+        await self._fill_work_sizes(works)
+        stored = await self.database.insert_douyin_works(works)
+        if any(item.get("create_date") == self._today_str() for item in works):
+            await self.database.update_douyin_user_new(sec_user_id, True)
+        return len(works), int(stored or 0)
+
+    def _init_user_full_sync_progress(self, sec_user_id: str) -> dict:
+        sec_user_id = str(sec_user_id or "").strip()
+        if not sec_user_id:
+            return {}
+        progress = self._user_full_sync_progress.get(sec_user_id)
+        if not progress:
+            progress = {
+                "sec_user_id": sec_user_id,
+                "status": "idle",
+                "started_at": "",
+                "updated_at": "",
+                "finished_at": "",
+                "pages": 0,
+                "works": 0,
+                "stored": 0,
+                "has_more": False,
+                "error": "",
+            }
+            self._user_full_sync_progress[sec_user_id] = progress
+        return progress
+
+    def _update_user_full_sync_progress(self, sec_user_id: str, **updates) -> dict:
+        progress = self._init_user_full_sync_progress(sec_user_id)
+        if not progress:
+            return {}
+        progress.update(updates)
+        progress["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return progress
+
+    async def _sync_user_all_works(
+        self,
+        sec_user_id: str,
+        seed_data: list[dict] | None = None,
+        seed_next_cursor: int = 0,
+        seed_has_more: bool = False,
+    ) -> None:
+        sec_user_id = str(sec_user_id or "").strip()
+        if not sec_user_id:
+            return
+        if sec_user_id in self._user_full_syncing:
+            return
+        self._user_full_syncing.add(sec_user_id)
+        self._update_user_full_sync_progress(
+            sec_user_id,
+            status="running",
+            started_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            finished_at="",
+            pages=0,
+            works=0,
+            stored=0,
+            has_more=bool(seed_has_more),
+            error="",
+        )
+        total_pages = 0
+        total_works = 0
+        total_saved = 0
+        try:
+            seed_items = [item for item in (seed_data or []) if self._is_work_item(item)]
+            count, saved = await self._store_account_work_items(sec_user_id, seed_items)
+            total_works += count
+            total_saved += saved
+            if seed_data is not None:
+                total_pages = 1
+
+            cursor = int(seed_next_cursor or 0)
+            has_more = bool(seed_has_more)
+            if seed_data is None:
+                cursor = 0
+                has_more = True
+            self._update_user_full_sync_progress(
+                sec_user_id,
+                pages=total_pages,
+                works=total_works,
+                stored=total_saved,
+                has_more=has_more,
+            )
+            while has_more and total_pages < self.USER_FULL_SYNC_MAX_PAGES:
+                (
+                    data,
+                    next_cursor,
+                    has_more,
+                    cookie_id,
+                    _cookie_invalid,
+                    empty_data,
+                ) = await self._fetch_douyin_account_page_with_pool(
+                    sec_user_id,
+                    cursor=cursor,
+                    count=self.USER_FULL_SYNC_PAGE_COUNT,
+                )
+                if cookie_id and (data or empty_data):
+                    await self.database.touch_douyin_cookie(cookie_id)
+
+                work_items = [item for item in data if self._is_work_item(item)]
+                count, saved = await self._store_account_work_items(sec_user_id, work_items)
+                total_works += count
+                total_saved += saved
+                total_pages += 1
+                self._update_user_full_sync_progress(
+                    sec_user_id,
+                    pages=total_pages,
+                    works=total_works,
+                    stored=total_saved,
+                    has_more=has_more,
+                )
+
+                next_cursor = int(next_cursor or 0)
+                if not data and (empty_data or next_cursor == cursor):
+                    break
+                cursor = next_cursor
+
+            user_row = await self.database.get_douyin_user(sec_user_id)
+            if user_row:
+                has_works = bool(total_works > 0)
+                status = "active" if has_works else "no_works"
+                if (
+                    bool(user_row.get("has_works", 0)) != has_works
+                    or str(user_row.get("status", "")).strip() != status
+                ):
+                    await self.database.upsert_douyin_user(
+                        sec_user_id=sec_user_id,
+                        uid=str(user_row.get("uid", "")),
+                        nickname=str(user_row.get("nickname", "")),
+                        avatar=str(user_row.get("avatar", "")),
+                        cover=str(user_row.get("cover", "")),
+                        has_works=has_works,
+                        status=status,
+                    )
+            await self.database.update_douyin_user_fetch_time(sec_user_id)
+            self.logger.info(
+                _(
+                    "新增用户全量作品同步完成: sec_user_id={sec_user_id}, total_works={total_works}, stored={stored}, pages={pages}"
+                ).format(
+                    sec_user_id=sec_user_id,
+                    total_works=total_works,
+                    stored=total_saved,
+                    pages=total_pages,
+                )
+            )
+            self._update_user_full_sync_progress(
+                sec_user_id,
+                status="done",
+                finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                has_more=bool(has_more),
+            )
+        except Exception as exc:
+            error_text = str(exc)
+            if len(error_text) > 200:
+                error_text = f"{error_text[:200]}..."
+            self._update_user_full_sync_progress(
+                sec_user_id,
+                status="failed",
+                finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                error=error_text,
+            )
+            self.logger.error(_("新增用户全量作品同步异常"), exc_info=True)
+        finally:
+            self._user_full_syncing.discard(sec_user_id)
+
+    def _trigger_user_full_sync(
+        self,
+        sec_user_id: str,
+        seed_data: list[dict] | None = None,
+        seed_next_cursor: int = 0,
+        seed_has_more: bool = False,
+    ) -> None:
+        sec_user_id = str(sec_user_id or "").strip()
+        if not sec_user_id:
+            return
+        if sec_user_id in self._user_full_syncing:
+            self._update_user_full_sync_progress(sec_user_id, status="running")
+            return
+        self._update_user_full_sync_progress(
+            sec_user_id,
+            status="queued",
+            started_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            finished_at="",
+            pages=0,
+            works=0,
+            stored=0,
+            has_more=bool(seed_has_more),
+            error="",
+        )
+        asyncio.create_task(
+            self._sync_user_all_works(
+                sec_user_id=sec_user_id,
+                seed_data=seed_data,
+                seed_next_cursor=seed_next_cursor,
+                seed_has_more=seed_has_more,
+            )
+        )
+
     async def _refresh_user_latest(self, sec_user_id: str) -> dict:
         data, next_cursor, has_more, cookie_id, cookie_invalid, empty_data = await self._fetch_douyin_account_page_with_pool(
             sec_user_id,
@@ -2624,6 +2833,45 @@ class APIServer(TikTok):
             row["next_auto_update_at"] = await self._compute_next_auto_update_at(row)
             return DouyinUser(**self._normalize_user_row(row))
 
+        @self.server.get(
+            "/admin/douyin/users/{sec_user_id}/full-sync",
+            summary=_("获取抖音用户全量同步进度"),
+            tags=[_("管理")],
+            response_model=DataResponse,
+        )
+        async def get_douyin_user_full_sync(
+            sec_user_id: str, token: str = Depends(token_dependency)
+        ):
+            row = await self.database.get_douyin_user(sec_user_id)
+            if not row:
+                raise HTTPException(status_code=404, detail=_("抖音用户不存在"))
+            progress = self._init_user_full_sync_progress(sec_user_id)
+            return DataResponse(
+                message=_("请求成功"),
+                data=progress,
+                params={"sec_user_id": sec_user_id},
+            )
+
+        @self.server.post(
+            "/admin/douyin/users/{sec_user_id}/full-sync",
+            summary=_("触发抖音用户全量同步"),
+            tags=[_("管理")],
+            response_model=DataResponse,
+        )
+        async def trigger_douyin_user_full_sync(
+            sec_user_id: str, token: str = Depends(token_dependency)
+        ):
+            row = await self.database.get_douyin_user(sec_user_id)
+            if not row:
+                raise HTTPException(status_code=404, detail=_("抖音用户不存在"))
+            self._trigger_user_full_sync(sec_user_id)
+            progress = self._init_user_full_sync_progress(sec_user_id)
+            return DataResponse(
+                message=_("已触发同步"),
+                data=progress,
+                params={"sec_user_id": sec_user_id},
+            )
+
         @self.server.post(
             "/admin/douyin/users",
             summary=_("新增抖音用户并拉取信息"),
@@ -2672,7 +2920,12 @@ class APIServer(TikTok):
                         has_works=True,
                         status="active",
                     )
-                    self._trigger_refresh_latest(sec_user_id)
+                    self._trigger_user_full_sync(
+                        sec_user_id,
+                        seed_data=data,
+                        seed_next_cursor=next_cursor,
+                        seed_has_more=has_more,
+                    )
                     self._trigger_refresh_live(sec_user_id)
                     return DouyinUser(**self._normalize_user_row(record))
                 if work_items:
@@ -2685,7 +2938,12 @@ class APIServer(TikTok):
                         has_works=True,
                         status="active",
                     )
-                    self._trigger_refresh_latest(sec_user_id)
+                    self._trigger_user_full_sync(
+                        sec_user_id,
+                        seed_data=data,
+                        seed_next_cursor=next_cursor,
+                        seed_has_more=has_more,
+                    )
                     self._trigger_refresh_live(sec_user_id)
                     return DouyinUser(**self._normalize_user_row(record))
                 record = await self.database.upsert_douyin_user(
@@ -2697,7 +2955,12 @@ class APIServer(TikTok):
                     has_works=False,
                     status="no_works",
                 )
-                self._trigger_refresh_latest(sec_user_id)
+                self._trigger_user_full_sync(
+                    sec_user_id,
+                    seed_data=data,
+                    seed_next_cursor=next_cursor,
+                    seed_has_more=has_more,
+                )
                 self._trigger_refresh_live(sec_user_id)
                 return DouyinUser(**self._normalize_user_row(record))
             record = await self.database.upsert_douyin_user(
