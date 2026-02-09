@@ -324,6 +324,9 @@ const state = reactive({
   user: {},
   liveInfo: {},
   fullSync: {},
+  settings: {
+    uploadEnabled: true,
+  },
   works: {
     items: [],
     total: 0,
@@ -444,6 +447,7 @@ const fullSyncHint = computed(() => {
   }
   return pieces.join(" | ");
 });
+const isUploadEnabled = computed(() => state.settings.uploadEnabled);
 const clientUserUrl = computed(() => {
   if (!userId.value) {
     return "/client-ui/";
@@ -534,6 +538,12 @@ const formatDateTime = (item) => {
 
 const getUploadState = (item) => {
   const status = (item?.upload_status || "pending").toLowerCase();
+  if (!isUploadEnabled.value) {
+    if (["uploaded", "uploading", "downloaded"].includes(status)) {
+      return "downloaded";
+    }
+    return "pending";
+  }
   if (["uploaded", "uploading", "downloading", "downloaded", "failed"].includes(status)) {
     return status;
   }
@@ -542,6 +552,9 @@ const getUploadState = (item) => {
 
 const getUploadTitle = (item) => {
   const status = getUploadState(item);
+  if (!isUploadEnabled.value) {
+    return status === "downloaded" ? "已下载" : "未下载";
+  }
   if (status === "uploaded") {
     return "上传完成";
   }
@@ -562,6 +575,9 @@ const getUploadTitle = (item) => {
 
 const getUploadText = (item) => {
   const status = getUploadState(item);
+  if (!isUploadEnabled.value) {
+    return status === "downloaded" ? "已下载" : "未下载";
+  }
   if (status === "uploaded") {
     return "已上传";
   }
@@ -619,6 +635,15 @@ const loadUser = async () => {
     state.user = data || {};
   } catch (error) {
     setAlert("error", error.message);
+  }
+};
+
+const loadSettings = async () => {
+  try {
+    const data = await apiRequest("/settings");
+    state.settings.uploadEnabled = Boolean(data?.upload?.enabled ?? true);
+  } catch (error) {
+    state.settings.uploadEnabled = true;
   }
 };
 
@@ -796,6 +821,7 @@ const toggleAutoDownload = async () => {
 };
 
 onMounted(async () => {
+  await loadSettings();
   await loadUser();
   await reloadWorks();
   await loadLiveCache();
@@ -813,6 +839,7 @@ watch(
     state.liveInfo = {};
     state.fullSync = {};
     state.showInfo = false;
+    await loadSettings();
     await loadUser();
     await reloadWorks();
     await loadLiveCache();
