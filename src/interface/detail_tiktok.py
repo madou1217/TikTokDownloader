@@ -1,6 +1,4 @@
-from typing import Callable
-from typing import TYPE_CHECKING
-from typing import Union
+from typing import TYPE_CHECKING, Callable, Union
 
 from src.interface.template import APITikTok
 from src.translation import _
@@ -85,6 +83,7 @@ async def test():
     from src.testers import Params
 
     async with Params() as params:
+        DetailTikTok.params["msToken"] = params.msToken_tiktok
         i = DetailTikTok(
             params,
             detail_id="",
