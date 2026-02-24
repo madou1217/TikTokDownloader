@@ -116,6 +116,7 @@ class APIServer(TikTok):
     DEFAULT_COOKIE_MAX_FAILS = 3
     DEFAULT_COOKIE_COOLDOWN_SECONDS = 600
     DOUYIN_COOKIE_DOMAINS = ("douyin.com", ".douyin.com", "www.douyin.com")
+    DEFAULT_COOKIE_POOL_ACCOUNT = "default_cookie"
 
     def __init__(
         self,
@@ -165,6 +166,50 @@ class APIServer(TikTok):
     @staticmethod
     def _hash_cookie(cookie: str) -> str:
         return sha256(cookie.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _cookie_pairs(cls, cookie: str) -> list[tuple[str, str]]:
+        pairs: list[tuple[str, str]] = []
+        for chunk in str(cookie or "").split(";"):
+            segment = chunk.strip()
+            if not segment or "=" not in segment:
+                continue
+            key, value = segment.split("=", 1)
+            key = key.strip()
+            if not key:
+                continue
+            pairs.append((key, value.strip()))
+        return pairs
+
+    @classmethod
+    def _normalize_cookie(cls, cookie: str) -> str:
+        latest: dict[str, str] = {}
+        for key, value in cls._cookie_pairs(cookie):
+            latest[key] = value
+        if not latest:
+            return str(cookie or "").strip()
+        return "; ".join(f"{key}={value}" for key, value in sorted(latest.items()))
+
+    @classmethod
+    def _cookie_fingerprint(cls, cookie: str) -> str:
+        normalized = cls._normalize_cookie(cookie)
+        if not normalized:
+            return ""
+        return cls._hash_cookie(normalized)
+
+    def _resolve_cookie_account(
+        self,
+        incoming_account: str,
+        existing_account: str = "",
+        source: str = "manual",
+    ) -> str:
+        incoming = str(incoming_account or "").strip()
+        existing = str(existing_account or "").strip()
+        if source == "default":
+            if existing and existing != self.DEFAULT_COOKIE_POOL_ACCOUNT:
+                return existing
+            return incoming or existing or self.DEFAULT_COOKIE_POOL_ACCOUNT
+        return incoming or existing
 
     @staticmethod
     def _mask_cookie(cookie: str) -> str:
@@ -678,16 +723,75 @@ class APIServer(TikTok):
             supported=supported or "-",
         )
 
-    async def _save_douyin_cookie(self, account: str, cookie: str) -> DouyinCookie:
-        cookie_value = (cookie or "").strip()
-        if not Cookie.validate_cookie_minimal(cookie_value):
+    async def _save_douyin_cookie(
+        self,
+        account: str,
+        cookie: str,
+        source: str = "manual",
+    ) -> DouyinCookie:
+        raw_cookie = (cookie or "").strip()
+        if not Cookie.validate_cookie_minimal(raw_cookie):
             raise HTTPException(status_code=400, detail=_("Cookie 格式无效"))
+        cookie_value = self._normalize_cookie(raw_cookie)
+        if not Cookie.validate_cookie_minimal(cookie_value):
+            cookie_value = raw_cookie
+        cookie_hash = self._hash_cookie(cookie_value)
+        fingerprint = self._cookie_fingerprint(cookie_value)
+        rows = await self.database.list_douyin_cookies()
+        matched = [
+            row
+            for row in rows
+            if self._cookie_fingerprint(row.get("cookie", "")) == fingerprint
+        ]
+        if matched:
+            primary = matched[0]
+            for duplicate in matched[1:]:
+                duplicate_id = int(duplicate.get("id", 0) or 0)
+                if duplicate_id:
+                    await self.database.delete_douyin_cookie(duplicate_id)
+            account_name = self._resolve_cookie_account(
+                account,
+                primary.get("account", ""),
+                source=source,
+            )
+            primary_id = int(primary.get("id", 0) or 0)
+            if primary_id:
+                if primary.get("cookie_hash", "") == cookie_hash:
+                    record = await self.database.upsert_douyin_cookie(
+                        account_name,
+                        cookie_value,
+                        cookie_hash,
+                    )
+                else:
+                    record = await self.database.update_douyin_cookie(
+                        primary_id,
+                        account_name,
+                        cookie_value,
+                        cookie_hash,
+                    )
+                return DouyinCookie(**self._normalize_cookie_row(record))
+        account_name = self._resolve_cookie_account(account, source=source)
         record = await self.database.upsert_douyin_cookie(
-            account,
+            account_name,
             cookie_value,
-            self._hash_cookie(cookie_value),
+            cookie_hash,
         )
         return DouyinCookie(**self._normalize_cookie_row(record))
+
+    async def _sync_default_cookie_to_pool(self) -> None:
+        default_cookie = self._resolve_default_douyin_cookie()
+        if not default_cookie:
+            return
+        try:
+            await self._save_douyin_cookie(
+                self.DEFAULT_COOKIE_POOL_ACCOUNT,
+                default_cookie,
+                source="default",
+            )
+        except HTTPException:
+            self.logger.warning(_("默认 Cookie 格式无效，已跳过写入 Cookie 池"))
+        except Exception:
+            self.logger.error(_("默认 Cookie 同步到 Cookie 池失败"), exc_info=True)
 
     @staticmethod
     def _format_timestamp(ts: int) -> str:
@@ -2990,6 +3094,7 @@ class APIServer(TikTok):
         @self.server.on_event("startup")
         async def startup_schedule():
             await self.database.mark_running_live_records_interrupted()
+            await self._sync_default_cookie_to_pool()
             if not self._schedule_task:
                 self._schedule_task = asyncio.create_task(self._run_schedule_loop())
             if not self._refresh_workers:
@@ -3248,6 +3353,7 @@ class APIServer(TikTok):
             extract: Settings, token: str = Depends(token_dependency)
         ):
             await self.parameter.set_settings_data(extract.model_dump())
+            await self._sync_default_cookie_to_pool()
             return Settings(**self.parameter.get_settings_data())
 
         @self.server.get(
@@ -4993,6 +5099,25 @@ class APIServer(TikTok):
     ):
         root, params, logger = self.record.run(self.parameter)
         async with logger(root, console=self.console, **params) as record:
+            # 服务层注入 Cookie 池逻辑：仅对抖音详情接口生效，且仅在调用方未显式传入 cookie 时启用。
+            if not tiktok and not str(getattr(extract, "cookie", "") or "").strip():
+                detail_data, cookie_id = await self._fetch_douyin_detail_with_pool(
+                    extract.detail_id,
+                    proxy=extract.proxy,
+                )
+                if cookie_id and detail_data:
+                    await self.database.touch_douyin_cookie(cookie_id)
+                if detail_data:
+                    if extract.source:
+                        return self.success_response(extract, detail_data)
+                    parsed = await self.extractor.run(
+                        [detail_data],
+                        record,
+                        tiktok=False,
+                    )
+                    if parsed:
+                        return self.success_response(extract, parsed[0])
+                return self.failed_response(extract)
             if data := await self._handle_detail(
                 [extract.detail_id],
                 tiktok,

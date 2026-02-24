@@ -1768,6 +1768,42 @@ class Database:
         )
         return dict(row) if row else {}
 
+    async def update_douyin_cookie(
+        self,
+        cookie_id: int,
+        account: str,
+        cookie: str,
+        cookie_hash: str,
+    ) -> dict:
+        now = self._now_str()
+        await self.database.execute(
+            """UPDATE douyin_cookie
+            SET account=?,
+                cookie=?,
+                cookie_hash=?,
+                status='active',
+                fail_count=0,
+                last_failed_at='',
+                updated_at=?
+            WHERE id=?;""",
+            (
+                account,
+                cookie,
+                cookie_hash,
+                now,
+                cookie_id,
+            ),
+        )
+        await self.database.commit()
+        row = await self._query_one(
+            """SELECT id, account, cookie, cookie_hash, status, fail_count,
+            last_used_at, last_failed_at, created_at, updated_at
+            FROM douyin_cookie
+            WHERE id=?;""",
+            (cookie_id,),
+        )
+        return dict(row) if row else {}
+
     async def mark_douyin_cookie_expired(self, cookie_id: int) -> None:
         now = self._now_str()
         await self.database.execute(
