@@ -1377,14 +1377,15 @@ class Database:
                 "uploaded": 0,
                 "failed": 0,
             }
+        row_data = dict(row)
         return {
-            "total": int(row.get("total") or 0),
-            "pending": int(row.get("pending") or 0),
-            "downloading": int(row.get("downloading") or 0),
-            "downloaded": int(row.get("downloaded") or 0),
-            "uploading": int(row.get("uploading") or 0),
-            "uploaded": int(row.get("uploaded") or 0),
-            "failed": int(row.get("failed") or 0),
+            "total": int(row_data.get("total") or 0),
+            "pending": int(row_data.get("pending") or 0),
+            "downloading": int(row_data.get("downloading") or 0),
+            "downloaded": int(row_data.get("downloaded") or 0),
+            "uploading": int(row_data.get("uploading") or 0),
+            "uploaded": int(row_data.get("uploaded") or 0),
+            "failed": int(row_data.get("failed") or 0),
         }
 
     async def count_douyin_works_all(self) -> int:

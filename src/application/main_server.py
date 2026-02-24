@@ -2871,6 +2871,11 @@ class APIServer(TikTok):
             )
 
         @self.server.post(
+            "/admin/settings",
+            include_in_schema=False,
+            response_model=Settings,
+        )
+        @self.server.post(
             "/settings",
             summary=_("更新项目全局配置"),
             description=_(
@@ -2891,6 +2896,11 @@ class APIServer(TikTok):
             await self.parameter.set_settings_data(extract.model_dump())
             return Settings(**self.parameter.get_settings_data())
 
+        @self.server.get(
+            "/admin/settings",
+            include_in_schema=False,
+            response_model=Settings,
+        )
         @self.server.get(
             "/settings",
             summary=_("获取项目全局配置"),

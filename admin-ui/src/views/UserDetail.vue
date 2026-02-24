@@ -720,7 +720,15 @@ const loadUser = async () => {
 
 const loadSettings = async () => {
   try {
-    const data = await apiRequest("/settings");
+    let data = null;
+    try {
+      data = await apiRequest("/admin/settings");
+    } catch (error) {
+      if (error?.status !== 404) {
+        throw error;
+      }
+      data = await apiRequest("/settings");
+    }
     state.settings.uploadEnabled = Boolean(data?.upload?.enabled ?? true);
   } catch (error) {
     state.settings.uploadEnabled = true;
