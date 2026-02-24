@@ -137,6 +137,9 @@
           <span class="works-summary-item total">总数 {{ workStatusSummary.total }}</span>
           <span class="works-summary-item downloading">
             下载中 {{ workStatusSummary.downloading }}
+            <template v-if="workStatusSummary.downloading > 0">
+              ({{ downloadingAverageProgress }}%)
+            </template>
           </span>
           <span class="works-summary-item pending">未下载 {{ workStatusSummary.pending }}</span>
           <span class="works-summary-item downloaded">已下载 {{ workStatusSummary.downloaded }}</span>
@@ -304,6 +307,19 @@
               {{ getUploadText(item) }}
             </span>
           </div>
+          <div
+            v-if="getUploadState(item) === 'downloading'"
+            class="work-progress"
+            :title="`下载进度 ${getDownloadProgress(item)}%`"
+          >
+            <div class="work-progress-track">
+              <div
+                class="work-progress-fill"
+                :style="{ width: `${getDownloadProgress(item)}%` }"
+              ></div>
+            </div>
+            <span class="work-progress-value">{{ getDownloadProgress(item) }}%</span>
+          </div>
           <a
             v-if="isUploadEnabled && item.upload_destination"
             class="work-upload-path"
@@ -356,6 +372,7 @@ const state = reactive({
     total: 0,
     pending: 0,
     downloading: 0,
+    downloading_progress_total: 0,
     downloaded: 0,
     uploading: 0,
     uploaded: 0,
@@ -485,6 +502,14 @@ const fullSyncHint = computed(() => {
   return pieces.join(" | ");
 });
 const isUploadEnabled = computed(() => state.settings.uploadEnabled);
+const downloadingAverageProgress = computed(() => {
+  const downloading = Number(state.workStats.downloading) || 0;
+  const progressTotal = Number(state.workStats.downloading_progress_total) || 0;
+  if (!downloading) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round(progressTotal / downloading)));
+});
 const workStatusSummary = computed(() => {
   const total = Number(state.workStats.total) || 0;
   const pending = Number(state.workStats.pending) || 0;
@@ -621,12 +646,13 @@ const getUploadState = (item) => {
 
 const getUploadTitle = (item) => {
   const status = getUploadState(item);
+  const progress = getDownloadProgress(item);
   if (!isUploadEnabled.value) {
     if (status === "downloaded") {
       return "已下载";
     }
     if (status === "downloading") {
-      return "下载中";
+      return `下载中 ${progress}%`;
     }
     if (status === "failed") {
       return item?.upload_message || "下载失败";
@@ -643,7 +669,7 @@ const getUploadTitle = (item) => {
     return "已下载，未上传";
   }
   if (status === "downloading") {
-    return "下载中";
+    return `下载中 ${progress}%`;
   }
   if (status === "failed") {
     return item?.upload_message || "处理失败";
@@ -653,12 +679,13 @@ const getUploadTitle = (item) => {
 
 const getUploadText = (item) => {
   const status = getUploadState(item);
+  const progress = getDownloadProgress(item);
   if (!isUploadEnabled.value) {
     if (status === "downloaded") {
       return "已下载";
     }
     if (status === "downloading") {
-      return "下载中";
+      return `下载中 ${progress}%`;
     }
     if (status === "failed") {
       return "失败";
@@ -675,12 +702,25 @@ const getUploadText = (item) => {
     return "未上传";
   }
   if (status === "downloading") {
-    return "下载中";
+    return `下载中 ${progress}%`;
   }
   if (status === "failed") {
     return "失败";
   }
   return "未下载";
+};
+
+const getDownloadProgress = (item) => {
+  const status = (item?.upload_status || "pending").toLowerCase();
+  if (["downloaded", "uploading", "uploaded"].includes(status)) {
+    return 100;
+  }
+  const raw = Number(item?.download_progress);
+  if (!Number.isFinite(raw)) {
+    return 0;
+  }
+  const value = Math.round(raw);
+  return Math.max(0, Math.min(100, value));
 };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -869,6 +909,7 @@ const loadWorkStats = async (silent = false) => {
       total: Number(stats.total) || 0,
       pending: Number(stats.pending) || 0,
       downloading: Number(stats.downloading) || 0,
+      downloading_progress_total: Number(stats.downloading_progress_total) || 0,
       downloaded: Number(stats.downloaded) || 0,
       uploading: Number(stats.uploading) || 0,
       uploaded: Number(stats.uploaded) || 0,
@@ -1069,6 +1110,7 @@ watch(
       total: 0,
       pending: 0,
       downloading: 0,
+      downloading_progress_total: 0,
       downloaded: 0,
       uploading: 0,
       uploaded: 0,

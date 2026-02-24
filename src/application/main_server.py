@@ -113,6 +113,9 @@ class APIServer(TikTok):
     AUTO_ZOMBIE_TIMEOUT_MINUTES = 120
     AUTO_ZOMBIE_RESET_LIMIT = 500
     AUTO_FAILED_RETRY_INTERVAL_MINUTES = 15
+    DEFAULT_COOKIE_MAX_FAILS = 3
+    DEFAULT_COOKIE_COOLDOWN_SECONDS = 600
+    DOUYIN_COOKIE_DOMAINS = ("douyin.com", ".douyin.com", "www.douyin.com")
 
     def __init__(
         self,
@@ -154,6 +157,9 @@ class APIServer(TikTok):
             "running_downloading": 0,
             "error": "",
         }
+        self._default_cookie_fail_count = 0
+        self._default_cookie_backoff_until = 0.0
+        self._default_cookie_last_error = ""
         self.live_recorder = DouyinLiveRecorder(parameter, database)
 
     @staticmethod
@@ -167,6 +173,63 @@ class APIServer(TikTok):
         if len(cookie) <= 12:
             return "*" * len(cookie)
         return f"{cookie[:6]}...{cookie[-4:]}"
+
+    @staticmethod
+    def _is_container_runtime() -> bool:
+        return Path("/.dockerenv").is_file()
+
+    def _resolve_default_douyin_cookie(self) -> str:
+        headers = getattr(self.parameter, "headers", {}) or {}
+        cookie = str(headers.get("Cookie", "") or "").strip()
+        if cookie:
+            return cookie
+        cookie_str = str(getattr(self.parameter, "cookie_str", "") or "").strip()
+        if cookie_str:
+            return cookie_str
+        cookie_dict = getattr(self.parameter, "cookie_dict", {}) or {}
+        if isinstance(cookie_dict, dict) and cookie_dict:
+            return cookie_dict_to_str(cookie_dict)
+        return ""
+
+    def _get_default_douyin_cookie(self) -> str:
+        if (
+            self._default_cookie_backoff_until
+            and time_module.time() < self._default_cookie_backoff_until
+        ):
+            return ""
+        return self._resolve_default_douyin_cookie()
+
+    def _mark_default_cookie_failed(self, reason: str = "") -> None:
+        if not self._resolve_default_douyin_cookie():
+            return
+        self._default_cookie_fail_count += 1
+        self._default_cookie_last_error = str(reason or "").strip()
+        if self._default_cookie_fail_count < self.DEFAULT_COOKIE_MAX_FAILS:
+            return
+        self._default_cookie_backoff_until = (
+            time_module.time() + self.DEFAULT_COOKIE_COOLDOWN_SECONDS
+        )
+        self.logger.warning(
+            _(
+                "默认 Cookie 连续失败 {count} 次，已暂停回退 {seconds} 秒，原因：{reason}"
+            ).format(
+                count=self._default_cookie_fail_count,
+                seconds=self.DEFAULT_COOKIE_COOLDOWN_SECONDS,
+                reason=self._default_cookie_last_error or "-",
+            )
+        )
+
+    def _mark_default_cookie_succeeded(self) -> None:
+        if not (
+            self._default_cookie_fail_count
+            or self._default_cookie_backoff_until
+            or self._default_cookie_last_error
+        ):
+            return
+        self._default_cookie_fail_count = 0
+        self._default_cookie_backoff_until = 0.0
+        self._default_cookie_last_error = ""
+        self.logger.info(_("默认 Cookie 校验恢复，已重新启用回退"))
 
     @classmethod
     def _extract_first_url(cls, value) -> str:
@@ -578,9 +641,42 @@ class APIServer(TikTok):
         except Exception:
             return ""
 
-    def _read_browser_cookie(self, browser: str) -> dict[str, str]:
+    def _read_browser_cookie(self, browser: str) -> tuple[dict[str, str], str]:
         reader = Browser(self.parameter, self.parameter.cookie_object)
-        return reader.get(browser, Browser.PLATFORM[False].domain)
+        cookies, detail = reader.get_with_detail(
+            browser,
+            list(self.DOUYIN_COOKIE_DOMAINS),
+        )
+        if cookies:
+            return cookies, ""
+        preferred = str(browser or "").strip().lower()
+        for name in Browser.supported_browser_names():
+            if preferred and name.lower() == preferred:
+                continue
+            fallback_cookies, _ = reader.get_with_detail(
+                name,
+                list(self.DOUYIN_COOKIE_DOMAINS),
+            )
+            if fallback_cookies:
+                self.logger.warning(
+                    _("指定浏览器未读取到 Cookie，已自动从 {browser} 读取").format(
+                        browser=name
+                    )
+                )
+                return fallback_cookies, ""
+        if self._is_container_runtime():
+            return (
+                {},
+                _(
+                    "当前后端运行在容器环境中，无法直接读取宿主机浏览器 Cookie，请改用剪贴板读取或手动粘贴"
+                ),
+            )
+        supported = "、".join(Browser.supported_browser_names())
+        reason = str(detail or _("未读取到 Cookie 数据")).strip()
+        return {}, _("{reason}（可用浏览器：{supported}）").format(
+            reason=reason,
+            supported=supported or "-",
+        )
 
     async def _save_douyin_cookie(self, account: str, cookie: str) -> DouyinCookie:
         cookie_value = (cookie or "").strip()
@@ -822,6 +918,7 @@ class APIServer(TikTok):
             upload_destination=row.get("upload_destination") or "",
             upload_origin_destination=row.get("upload_origin_destination") or "",
             upload_message=row.get("upload_message") or "",
+            download_progress=int(row.get("download_progress") or 0),
             local_path=row.get("local_path") or "",
             downloaded_at=row.get("downloaded_at") or "",
             uploaded_at=row.get("uploaded_at") or "",
@@ -1528,12 +1625,25 @@ class APIServer(TikTok):
         detail_id: str,
         proxy: str = None,
     ) -> tuple[dict | None, int | None]:
+        fallback_cookie = self._get_default_douyin_cookie()
         cookies = await self.database.list_douyin_cookies(status="active")
+        seen_hashes: set[str] = set()
         if not cookies:
-            data = await self._fetch_douyin_detail(detail_id, "", proxy=proxy)
+            data = await self._fetch_douyin_detail(
+                detail_id,
+                fallback_cookie,
+                proxy=proxy,
+            )
+            if fallback_cookie:
+                if data:
+                    self._mark_default_cookie_succeeded()
+                else:
+                    self._mark_default_cookie_failed("detail_fetch_empty")
             return data, None
         for item in cookies:
             cookie_value = item.get("cookie", "")
+            if cookie_value:
+                seen_hashes.add(self._hash_cookie(cookie_value))
             try:
                 data = await asyncio.wait_for(
                     self._fetch_douyin_detail(
@@ -1548,6 +1658,16 @@ class APIServer(TikTok):
                 continue
             if data:
                 return data, item.get("id", 0)
+        if fallback_cookie and self._hash_cookie(fallback_cookie) not in seen_hashes:
+            data = await self._fetch_douyin_detail(
+                detail_id,
+                fallback_cookie,
+                proxy=proxy,
+            )
+            if data:
+                self._mark_default_cookie_succeeded()
+                return data, None
+            self._mark_default_cookie_failed("detail_fetch_empty")
         data = await self._fetch_douyin_detail(detail_id, "", proxy=proxy)
         return data, None
 
@@ -1642,10 +1762,14 @@ class APIServer(TikTok):
                 "latest_aweme_id": str(latest.get("aweme_id") or ""),
                 "latest_create_ts": int(latest.get("create_ts") or 0),
                 "latest_status": str(latest.get("upload_status") or ""),
+                "latest_progress": int(latest.get("download_progress") or 0),
             },
             "stats": {
                 "pending": int(stats.get("pending") or 0),
                 "downloading": int(stats.get("downloading") or 0),
+                "downloading_progress_total": int(
+                    stats.get("downloading_progress_total") or 0
+                ),
                 "downloaded": int(stats.get("downloaded") or 0),
                 "uploading": int(stats.get("uploading") or 0),
                 "uploaded": int(stats.get("uploaded") or 0),
@@ -1780,20 +1904,31 @@ class APIServer(TikTok):
         count: int = 18,
         proxy: str = None,
     ) -> tuple[list[dict], int, bool, int | None, bool, bool]:
+        fallback_cookie = self._get_default_douyin_cookie()
         cookies = await self.database.list_douyin_cookies(status="active")
+        seen_hashes: set[str] = set()
         if not cookies:
             data, next_cursor, has_more, cookie_invalid, empty_data = (
                 await self._fetch_douyin_account_page(
                     sec_user_id,
-                    "",
+                    fallback_cookie,
                     cursor=cursor,
                     count=count,
                     proxy=proxy,
                 )
             )
+            if fallback_cookie:
+                if data or empty_data:
+                    self._mark_default_cookie_succeeded()
+                elif cookie_invalid:
+                    self._mark_default_cookie_failed("account_page_cookie_invalid")
+                else:
+                    self._mark_default_cookie_failed("account_page_empty")
             return data, next_cursor, has_more, None, cookie_invalid, empty_data
         for item in cookies:
             cookie_value = item.get("cookie", "")
+            if cookie_value:
+                seen_hashes.add(self._hash_cookie(cookie_value))
             try:
                 data, next_cursor, has_more, cookie_invalid, empty_data = (
                     await asyncio.wait_for(
@@ -1822,12 +1957,30 @@ class APIServer(TikTok):
                     cookie_invalid,
                     empty_data,
                 )
+        if fallback_cookie and self._hash_cookie(fallback_cookie) not in seen_hashes:
+            data, next_cursor, has_more, cookie_invalid, empty_data = (
+                await self._fetch_douyin_account_page(
+                    sec_user_id,
+                    fallback_cookie,
+                    cursor=cursor,
+                    count=count,
+                    proxy=proxy,
+                )
+            )
+            if data or empty_data:
+                self._mark_default_cookie_succeeded()
+                return data, next_cursor, has_more, None, cookie_invalid, empty_data
+            if cookie_invalid:
+                self._mark_default_cookie_failed("account_page_cookie_invalid")
+            else:
+                self._mark_default_cookie_failed("account_page_empty")
         return [], 0, False, None, True, False
 
     async def _fetch_douyin_account_data(
         self,
         extract: AccountPayload,
     ) -> tuple[list[dict] | None, dict, int | None]:
+        fallback_cookie = self._get_default_douyin_cookie()
         if extract.cookie:
             data, meta = await self.deal_account_detail(
                 0,
@@ -1857,15 +2010,26 @@ class APIServer(TikTok):
                 pages=extract.pages,
                 api=True,
                 source=extract.source,
-                cookie=extract.cookie,
+                cookie=fallback_cookie,
                 proxy=extract.proxy,
                 tiktok=False,
                 cursor=extract.cursor,
                 count=extract.count,
                 return_meta=True,
             )
+            if fallback_cookie:
+                if data or (meta or {}).get("empty_data"):
+                    self._mark_default_cookie_succeeded()
+                elif (meta or {}).get("cookie_invalid"):
+                    self._mark_default_cookie_failed("account_data_cookie_invalid")
+                else:
+                    self._mark_default_cookie_failed("account_data_empty")
             return data, meta, None
+        seen_hashes: set[str] = set()
         for item in cookies:
+            cookie_value = item.get("cookie", "")
+            if cookie_value:
+                seen_hashes.add(self._hash_cookie(cookie_value))
             data, meta = await self.deal_account_detail(
                 0,
                 extract.sec_user_id,
@@ -1875,7 +2039,7 @@ class APIServer(TikTok):
                 pages=extract.pages,
                 api=True,
                 source=extract.source,
-                cookie=item.get("cookie", ""),
+                cookie=cookie_value,
                 proxy=extract.proxy,
                 tiktok=False,
                 cursor=extract.cursor,
@@ -1886,12 +2050,37 @@ class APIServer(TikTok):
                 await self.database.mark_douyin_cookie_expired(item.get("id", 0))
                 continue
             return data, meta, item.get("id", 0)
+        if fallback_cookie and self._hash_cookie(fallback_cookie) not in seen_hashes:
+            data, meta = await self.deal_account_detail(
+                0,
+                extract.sec_user_id,
+                tab=extract.tab,
+                earliest=extract.earliest,
+                latest=extract.latest,
+                pages=extract.pages,
+                api=True,
+                source=extract.source,
+                cookie=fallback_cookie,
+                proxy=extract.proxy,
+                tiktok=False,
+                cursor=extract.cursor,
+                count=extract.count,
+                return_meta=True,
+            )
+            if data or meta.get("empty_data"):
+                self._mark_default_cookie_succeeded()
+                return data, meta, None
+            if meta.get("cookie_invalid"):
+                self._mark_default_cookie_failed("account_data_cookie_invalid")
+            else:
+                self._mark_default_cookie_failed("account_data_empty")
         return None, {"cookie_invalid": True, "empty_data": False}, None
 
     async def _fetch_douyin_account_live(
         self,
         extract: AccountLive,
     ) -> tuple[dict | None, int | None, str]:
+        fallback_cookie = self._get_default_douyin_cookie()
         if extract.cookie:
             live_info = await self.get_account_live_status(
                 extract.sec_user_id,
@@ -1904,13 +2093,21 @@ class APIServer(TikTok):
         if not cookies:
             live_info = await self.get_account_live_status(
                 extract.sec_user_id,
-                cookie=extract.cookie,
+                cookie=fallback_cookie,
                 proxy=extract.proxy,
                 dump_html=extract.dump_html,
             )
-            return live_info, None, extract.cookie
+            if fallback_cookie:
+                if live_info:
+                    self._mark_default_cookie_succeeded()
+                else:
+                    self._mark_default_cookie_failed("account_live_empty")
+            return live_info, None, fallback_cookie
+        seen_hashes: set[str] = set()
         for item in cookies:
             cookie_value = item.get("cookie", "")
+            if cookie_value:
+                seen_hashes.add(self._hash_cookie(cookie_value))
             live_info = await self.get_account_live_status(
                 extract.sec_user_id,
                 cookie=cookie_value,
@@ -1921,6 +2118,17 @@ class APIServer(TikTok):
                 await self.database.mark_douyin_cookie_expired(item.get("id", 0))
                 continue
             return live_info, item.get("id", 0), cookie_value
+        if fallback_cookie and self._hash_cookie(fallback_cookie) not in seen_hashes:
+            live_info = await self.get_account_live_status(
+                extract.sec_user_id,
+                cookie=fallback_cookie,
+                proxy=extract.proxy,
+                dump_html=extract.dump_html,
+            )
+            if live_info:
+                self._mark_default_cookie_succeeded()
+                return live_info, None, fallback_cookie
+            self._mark_default_cookie_failed("account_live_empty")
         return None, None, ""
 
     def _cache_live_info(self, sec_user_id: str, live_info: dict) -> None:
@@ -3763,9 +3971,12 @@ class APIServer(TikTok):
             payload: DouyinCookieBrowserCreate,
             token: str = Depends(token_dependency),
         ):
-            cookie_dict = self._read_browser_cookie(payload.browser)
+            cookie_dict, error_detail = self._read_browser_cookie(payload.browser)
             if not cookie_dict:
-                raise HTTPException(status_code=400, detail=_("未读取到 Cookie 数据"))
+                raise HTTPException(
+                    status_code=400,
+                    detail=error_detail or _("未读取到 Cookie 数据"),
+                )
             return await self._save_douyin_cookie(
                 payload.account,
                 cookie_dict_to_str(cookie_dict),

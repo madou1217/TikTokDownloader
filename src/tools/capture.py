@@ -45,7 +45,17 @@ def capture_error_request(function):
         try:
             return await function(self, *args, **kwargs)
         except (JSONDecodeError, UnicodeDecodeError):
-            self.log.error(_("响应内容不是有效的 JSON 数据，请尝试更新 Cookie！"))
+            detail = str(getattr(self, "last_non_json_detail", "") or "").strip()
+            cookie_hint = bool(
+                getattr(self, "last_cookie_invalid_hint", False)
+                or getattr(self, "cookie_invalid", False)
+            )
+            if cookie_hint:
+                self.log.error(_("响应内容不是有效的 JSON 数据，检测到登录态可能失效，请更新 Cookie！"))
+            else:
+                self.log.error(_("响应内容不是有效的 JSON 数据，可能触发风控或网关返回非 JSON 内容"))
+            if detail:
+                self.log.warning(detail)
         except HTTPStatusError as e:
             self.log.error(_("响应码异常：{error}").format(error=e))
         except NetworkError as e:

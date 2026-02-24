@@ -1,3 +1,4 @@
+from json.decoder import JSONDecodeError
 from time import time
 from typing import TYPE_CHECKING, Callable, Coroutine, Type, Union
 from urllib.parse import quote, urlencode
@@ -86,6 +87,8 @@ class API:
         self.response = []
         self.finished = False
         self.text = ""
+        self.last_non_json_detail = ""
+        self.last_cookie_invalid_hint = False
         self.set_temp_cookie(cookie)
 
     def set_temp_cookie(self, cookie: str = ""):
@@ -403,7 +406,57 @@ class API:
         # if response.status_code != 200:
         #     self.log.error(f"请求 {url} 失败，响应码 {response.status_code}")
         #     return
-        return response.json()
+        content_type = str(response.headers.get("Content-Type", "")).lower()
+        preview = self._build_response_preview(response)
+        self.last_non_json_detail = ""
+        self.last_cookie_invalid_hint = False
+        if "json" not in content_type:
+            self.last_non_json_detail = (
+                f"响应并非 JSON 格式: content-type={content_type or '-'} "
+                f"status={response.status_code} preview={preview}"
+            )
+            if self._detect_cookie_invalid_hint(content_type, preview):
+                self.last_cookie_invalid_hint = True
+                if hasattr(self, "cookie_invalid"):
+                    self.cookie_invalid = True
+        try:
+            return response.json()
+        except JSONDecodeError:
+            self.last_non_json_detail = (
+                f"响应 JSON 解析失败: content-type={content_type or '-'} "
+                f"status={response.status_code} preview={preview}"
+            )
+            if self._detect_cookie_invalid_hint(content_type, preview):
+                self.last_cookie_invalid_hint = True
+                if hasattr(self, "cookie_invalid"):
+                    self.cookie_invalid = True
+            raise
+
+    @staticmethod
+    def _build_response_preview(response, limit: int = 180) -> str:
+        try:
+            text = response.text or ""
+        except Exception:
+            return ""
+        text = " ".join(text.strip().split())
+        return text[:limit]
+
+    @staticmethod
+    def _detect_cookie_invalid_hint(content_type: str, preview: str) -> bool:
+        sample = f"{content_type}\n{preview}".lower()
+        keywords = (
+            "captcha",
+            "verify",
+            "risk",
+            "passport",
+            "login",
+            "请先登录",
+            "请完成验证",
+            "访问受限",
+            "sec_uid",
+            "x-bogus",
+        )
+        return any(key in sample for key in keywords)
 
     def __record_request_messages(
         self,

@@ -201,6 +201,7 @@ class UploadRecorder:
                 origin_destination=origin_destination,
                 local_path=local_path,
                 message="",
+                download_progress=100,
                 mark_downloaded=True,
                 mark_uploaded=True,
             )
@@ -212,6 +213,7 @@ class UploadRecorder:
             aweme_id=aweme_id,
             status="pending",
             message="",
+            download_progress=0,
         )
 
     async def mark_work_downloading(
@@ -224,6 +226,20 @@ class UploadRecorder:
             aweme_id=aweme_id,
             status="downloading",
             message="",
+            download_progress=0,
+        )
+
+    async def mark_work_download_progress(
+        self,
+        aweme_id: str,
+        progress: int,
+    ) -> None:
+        if not aweme_id:
+            return
+        await self.database.update_douyin_work_download_progress(
+            aweme_id=aweme_id,
+            progress=progress,
+            message=f"下载中 {max(0, min(100, int(progress or 0)))}%",
         )
 
     async def mark_work_downloaded(
@@ -238,6 +254,7 @@ class UploadRecorder:
             status="downloaded",
             local_path=local_path,
             message="",
+            download_progress=100,
             mark_downloaded=True,
         )
 
@@ -253,6 +270,7 @@ class UploadRecorder:
             status="uploading",
             local_path=local_path,
             message="",
+            download_progress=100,
             mark_downloaded=True,
         )
 

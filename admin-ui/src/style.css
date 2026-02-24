@@ -1047,7 +1047,6 @@ a.ghost {
 
 .work-upload-state.status-downloading {
   color: #f59e0b;
-  animation: cloud-flow 0.9s ease-in-out infinite;
 }
 
 .work-upload-state.status-downloaded {
@@ -1056,7 +1055,6 @@ a.ghost {
 
 .work-upload-state.status-uploading {
   color: #38bdf8;
-  animation: cloud-flow 1s ease-in-out infinite;
 }
 
 .work-upload-state.status-uploaded {
@@ -1100,7 +1098,34 @@ a.ghost {
 .work-stage-tag.status-downloading {
   color: #f59e0b;
   border-color: rgba(245, 158, 11, 0.35);
-  animation: cloud-flow 0.9s ease-in-out infinite;
+}
+
+.work-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.work-progress-track {
+  flex: 1;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  overflow: hidden;
+}
+
+.work-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #f59e0b, #fbbf24);
+  transition: width 0.35s ease;
+}
+
+.work-progress-value {
+  font-size: 11px;
+  line-height: 1;
+  color: #fbbf24;
+  font-variant-numeric: tabular-nums;
 }
 
 .work-stage-tag.status-downloaded {

@@ -2,7 +2,7 @@ from asyncio import Semaphore, gather
 from datetime import datetime
 from pathlib import Path
 from shutil import move
-from time import time
+from time import monotonic, time
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Callable, Union
 
@@ -854,11 +854,37 @@ class Downloader:
             total=content or None,
             completed=position,
         )
+        track_progress = self._can_track_work_upload(id_, suffix) and content > 0
+        last_progress_percent = max(0, min(100, int((position / content) * 100))) if track_progress else -1
+        last_progress_tick = monotonic()
+        if track_progress and last_progress_percent > 0:
+            await self.uploader.recorder.mark_work_download_progress(
+                id_,
+                last_progress_percent,
+            )
         try:
             async with open(cache, "ab") as f:
                 async for chunk in response.aiter_bytes(self.chunk):
                     await f.write(chunk)
                     progress.update(task_id, advance=len(chunk))
+                    if track_progress:
+                        completed = progress.get_task(task_id).completed
+                        current_percent = max(
+                            0,
+                            min(100, int((completed / content) * 100)),
+                        )
+                        now_tick = monotonic()
+                        if (
+                            current_percent >= 100
+                            or current_percent - last_progress_percent >= 2
+                            or now_tick - last_progress_tick >= 1.2
+                        ):
+                            await self.uploader.recorder.mark_work_download_progress(
+                                id_,
+                                current_percent,
+                            )
+                            last_progress_percent = current_percent
+                            last_progress_tick = now_tick
                 progress.remove_task(task_id)
         except (
             RequestError,

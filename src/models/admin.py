@@ -56,6 +56,7 @@ class DouyinWork(BaseModel):
     upload_destination: str = ""
     upload_origin_destination: str = ""
     upload_message: str = ""
+    download_progress: int = 0
     local_path: str = ""
     downloaded_at: str = ""
     uploaded_at: str = ""

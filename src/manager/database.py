@@ -118,6 +118,7 @@ class Database:
             upload_destination TEXT NOT NULL DEFAULT '',
             upload_origin_destination TEXT NOT NULL DEFAULT '',
             upload_message TEXT NOT NULL DEFAULT '',
+            download_progress INTEGER NOT NULL DEFAULT 0,
             local_path TEXT NOT NULL DEFAULT '',
             downloaded_at TEXT NOT NULL DEFAULT '',
             uploaded_at TEXT NOT NULL DEFAULT '',
@@ -213,6 +214,7 @@ class Database:
             "upload_destination": "TEXT NOT NULL DEFAULT ''",
             "upload_origin_destination": "TEXT NOT NULL DEFAULT ''",
             "upload_message": "TEXT NOT NULL DEFAULT ''",
+            "download_progress": "INTEGER NOT NULL DEFAULT 0",
             "local_path": "TEXT NOT NULL DEFAULT ''",
             "downloaded_at": "TEXT NOT NULL DEFAULT ''",
             "uploaded_at": "TEXT NOT NULL DEFAULT ''",
@@ -227,6 +229,12 @@ class Database:
             """UPDATE douyin_work
             SET status_updated_at=created_at
             WHERE status_updated_at='';"""
+        )
+        await self.database.execute(
+            """UPDATE douyin_work
+            SET download_progress=100
+            WHERE upload_status IN ('downloaded', 'uploading', 'uploaded')
+              AND download_progress=0;"""
         )
         await self.cursor.execute("PRAGMA table_info(upload_data);")
         upload_existing = {row["name"] for row in await self.cursor.fetchall()}
@@ -784,11 +792,15 @@ class Database:
         origin_destination: str = "",
         local_path: str = "",
         message: str = "",
+        download_progress: int | None = None,
         mark_downloaded: bool = False,
         mark_uploaded: bool = False,
     ) -> None:
         if not aweme_id:
             return
+        normalized = -1
+        if download_progress is not None:
+            normalized = max(0, min(100, int(download_progress)))
         now = self._now_str()
         await self.database.execute(
             """UPDATE douyin_work
@@ -800,6 +812,12 @@ class Database:
                 END,
                 local_path=CASE WHEN ?!='' THEN ? ELSE local_path END,
                 upload_message=?,
+                download_progress=CASE
+                    WHEN ? >= 0 THEN ?
+                    WHEN ? IN ('downloaded', 'uploading', 'uploaded') THEN 100
+                    WHEN ?='pending' THEN 0
+                    ELSE download_progress
+                END,
                 status_updated_at=?,
                 downloaded_at=CASE
                     WHEN ?=1 THEN ?
@@ -823,6 +841,10 @@ class Database:
                 local_path or "",
                 local_path or "",
                 message or "",
+                normalized,
+                normalized,
+                status or "",
+                status or "",
                 now,
                 1 if mark_downloaded else 0,
                 now,
@@ -831,6 +853,36 @@ class Database:
                 1 if mark_uploaded else 0,
                 now,
                 status or "",
+                now,
+                aweme_id,
+            ),
+        )
+        await self.database.commit()
+
+    async def update_douyin_work_download_progress(
+        self,
+        aweme_id: str,
+        progress: int,
+        message: str = "",
+    ) -> None:
+        if not aweme_id:
+            return
+        value = max(0, min(100, int(progress or 0)))
+        now = self._now_str()
+        await self.database.execute(
+            """UPDATE douyin_work
+            SET upload_status=CASE
+                    WHEN upload_status='' OR upload_status='pending' THEN 'downloading'
+                    ELSE upload_status
+                END,
+                download_progress=?,
+                upload_message=CASE WHEN ?!='' THEN ? ELSE upload_message END,
+                status_updated_at=?
+            WHERE aweme_id=?;""",
+            (
+                value,
+                message or "",
+                message or "",
                 now,
                 aweme_id,
             ),
@@ -1203,7 +1255,7 @@ class Database:
         sql = """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
             w.cover, w.play_count, w.width, w.height, w.work_type,
             w.upload_status, w.upload_provider, w.upload_destination,
-            w.upload_origin_destination, w.upload_message, w.local_path,
+            w.upload_origin_destination, w.upload_message, w.download_progress, w.local_path,
             w.downloaded_at, w.uploaded_at,
             COALESCE(u.nickname, '') AS nickname,
             COALESCE(u.avatar, '') AS avatar,
@@ -1234,7 +1286,7 @@ class Database:
             """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
             w.cover, w.play_count, w.width, w.height, w.work_type,
             w.upload_status, w.upload_provider, w.upload_destination,
-            w.upload_origin_destination, w.upload_message, w.local_path,
+            w.upload_origin_destination, w.upload_message, w.download_progress, w.local_path,
             w.downloaded_at, w.uploaded_at,
             COALESCE(u.nickname, '') AS nickname,
             COALESCE(u.avatar, '') AS avatar,
@@ -1280,7 +1332,7 @@ class Database:
         sql = """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
             w.cover, w.play_count, w.width, w.height, w.work_type,
             w.upload_status, w.upload_provider, w.upload_destination,
-            w.upload_origin_destination, w.upload_message, w.local_path,
+            w.upload_origin_destination, w.upload_message, w.download_progress, w.local_path,
             w.downloaded_at, w.uploaded_at,
             COALESCE(u.nickname, '') AS nickname,
             COALESCE(u.avatar, '') AS avatar,
@@ -1337,6 +1389,10 @@ class Database:
                     ELSE 0
                 END) AS downloading,
                 SUM(CASE
+                    WHEN status='downloading' THEN progress
+                    ELSE 0
+                END) AS downloading_progress_total,
+                SUM(CASE
                     WHEN status='downloaded' THEN 1
                     ELSE 0
                 END) AS downloaded,
@@ -1360,7 +1416,9 @@ class Database:
                     ELSE 0
                 END) AS pending
             FROM (
-                SELECT LOWER(TRIM(COALESCE(w.upload_status, ''))) AS status
+                SELECT
+                    LOWER(TRIM(COALESCE(w.upload_status, ''))) AS status,
+                    CAST(COALESCE(w.download_progress, 0) AS INTEGER) AS progress
                 FROM douyin_work w
                 JOIN douyin_user u ON w.sec_user_id = u.sec_user_id
                 WHERE w.sec_user_id=?
@@ -1382,6 +1440,9 @@ class Database:
             "total": int(row_data.get("total") or 0),
             "pending": int(row_data.get("pending") or 0),
             "downloading": int(row_data.get("downloading") or 0),
+            "downloading_progress_total": int(
+                row_data.get("downloading_progress_total") or 0
+            ),
             "downloaded": int(row_data.get("downloaded") or 0),
             "uploading": int(row_data.get("uploading") or 0),
             "uploaded": int(row_data.get("uploaded") or 0),
@@ -1404,7 +1465,7 @@ class Database:
             """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
             w.cover, w.play_count, w.width, w.height, w.work_type,
             w.upload_status, w.upload_provider, w.upload_destination,
-            w.upload_origin_destination, w.upload_message, w.local_path,
+            w.upload_origin_destination, w.upload_message, w.download_progress, w.local_path,
             w.downloaded_at, w.uploaded_at,
             COALESCE(u.nickname, '') AS nickname,
             COALESCE(u.avatar, '') AS avatar,
@@ -1571,7 +1632,7 @@ class Database:
             """SELECT w.sec_user_id, w.aweme_id, w.desc, w.create_ts, w.create_date,
             w.cover, w.play_count, w.width, w.height, w.work_type,
             w.upload_status, w.upload_provider, w.upload_destination,
-            w.upload_origin_destination, w.upload_message, w.local_path,
+            w.upload_origin_destination, w.upload_message, w.download_progress, w.local_path,
             w.downloaded_at, w.uploaded_at,
             COALESCE(u.nickname, '') AS nickname,
             COALESCE(u.avatar, '') AS avatar,

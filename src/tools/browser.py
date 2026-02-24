@@ -58,6 +58,7 @@ class Browser:
     def __init__(self, parameters: "Parameter", cookie_object: "Cookie"):
         self.console = parameters.console
         self.cookie_object = cookie_object
+        self.last_error = ""
         self.options = "\n".join(
             (
                 f"{i}. {k}: {v[1]}"
@@ -112,19 +113,43 @@ class Browser:
         browser: str | int,
         domains: list[str],
     ) -> dict[str, str]:
-        if not (browser := self.__browser_object(browser)):
-            self.console.warning(
-                _("浏览器名称或序号输入错误！"),
-            )
-            return {}
-        try:
-            cookies = browser(domains=domains)
-            return {i["name"]: i["value"] for i in cookies}
-        except RuntimeError:
-            self.console.warning(
-                _("读取 Cookie 失败，未找到 Cookie 数据！"),
-            )
+        cookies, detail = self.get_with_detail(browser, domains)
+        if cookies:
+            return cookies
+        if detail:
+            self.console.warning(detail)
         return {}
+
+    def get_with_detail(
+        self,
+        browser: str | int,
+        domains: list[str],
+    ) -> tuple[dict[str, str], str]:
+        self.last_error = ""
+        browser_obj = self.__browser_object(browser)
+        if not browser_obj:
+            detail = _("浏览器名称或序号输入错误，或当前系统不支持该浏览器")
+            self.last_error = detail
+            return {}, detail
+        try:
+            cookies = browser_obj(domains=domains)
+            data = {i["name"]: i["value"] for i in cookies}
+            if data:
+                return data, ""
+            detail = _("已读取浏览器数据，但未找到目标站点 Cookie")
+            self.last_error = detail
+            return {}, detail
+        except RuntimeError as error:
+            detail = _("读取 Cookie 失败：{error}").format(error=str(error).strip())
+            self.last_error = detail
+            return {}, detail
+        except Exception as error:
+            detail = _("读取 Cookie 失败：{type_name}: {error}").format(
+                type_name=type(error).__name__,
+                error=str(error).strip(),
+            )
+            self.last_error = detail
+            return {}, detail
 
     @classmethod
     def __browser_object(cls, browser: str | int):
@@ -147,6 +172,10 @@ class Browser:
         for i, j in cls.SUPPORT_BROWSER.items():
             if i.lower() == browser.lower():
                 return j[0]
+
+    @classmethod
+    def supported_browser_names(cls) -> list[str]:
+        return list(cls.SUPPORT_BROWSER.keys())
 
 
 match platform:
