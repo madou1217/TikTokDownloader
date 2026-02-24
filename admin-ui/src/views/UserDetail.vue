@@ -307,19 +307,6 @@
               {{ getUploadText(item) }}
             </span>
           </div>
-          <div
-            v-if="getUploadState(item) === 'downloading'"
-            class="work-progress"
-            :title="`下载进度 ${getDownloadProgress(item)}%`"
-          >
-            <div class="work-progress-track">
-              <div
-                class="work-progress-fill"
-                :style="{ width: `${getDownloadProgress(item)}%` }"
-              ></div>
-            </div>
-            <span class="work-progress-value">{{ getDownloadProgress(item) }}%</span>
-          </div>
           <a
             v-if="isUploadEnabled && item.upload_destination"
             class="work-upload-path"
