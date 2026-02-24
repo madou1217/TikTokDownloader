@@ -143,6 +143,17 @@ class APIServer(TikTok):
         self._auto_downloading = set()
         self._user_full_syncing = set()
         self._user_full_sync_progress = {}
+        self._auto_compensation_status = {
+            "last_run_at": "",
+            "last_force": False,
+            "reset_count": 0,
+            "users_total": 0,
+            "users_pending": 0,
+            "works_pending": 0,
+            "users_processed": 0,
+            "running_downloading": 0,
+            "error": "",
+        }
         self.live_recorder = DouyinLiveRecorder(parameter, database)
 
     @staticmethod
@@ -2231,6 +2242,35 @@ class APIServer(TikTok):
 
         return list(candidates.values())
 
+    async def _reconcile_work_status_from_download_record(
+        self,
+        aweme_ids: list[str],
+    ) -> int:
+        updated = 0
+        for aweme_id in aweme_ids:
+            if not aweme_id:
+                continue
+            row = await self.database.get_douyin_work(aweme_id)
+            status = str(row.get("upload_status") or "").strip().lower()
+            if status in ("downloaded", "uploaded", "uploading"):
+                continue
+            if not await self.recorder.has_id(aweme_id):
+                continue
+            raw_local_path = str(row.get("local_path", "")).strip()
+            local_file = self._resolve_local_cache_path(raw_local_path)
+            local_path = (
+                str(local_file) if local_file and local_file.is_file() else raw_local_path
+            )
+            await self.database.update_douyin_work_upload(
+                aweme_id=aweme_id,
+                status="downloaded",
+                local_path=local_path,
+                message="自动补偿: 检测到历史下载记录，已标记为已下载",
+                mark_downloaded=True,
+            )
+            updated += 1
+        return updated
+
     async def _auto_download_user_works(self, sec_user_id: str, works: list[dict]) -> None:
         if not sec_user_id or not works:
             return
@@ -2248,6 +2288,15 @@ class APIServer(TikTok):
             current_status = (row.get("upload_status") or "").lower()
             if current_status == "uploaded":
                 continue
+            if current_status in ("pending", "failed"):
+                if await self.recorder.has_id(aweme_id):
+                    await self.database.update_douyin_work_upload(
+                        aweme_id=aweme_id,
+                        status="downloaded",
+                        message="自动补偿: 检测到历史下载记录，已标记为已下载",
+                        mark_downloaded=True,
+                    )
+                    continue
             if not upload_enabled and current_status == "failed":
                 raw_local_path = str(row.get("local_path", "")).strip()
                 local_file = self._resolve_local_cache_path(raw_local_path)
@@ -2291,6 +2340,7 @@ class APIServer(TikTok):
         if not target_ids:
             return
         try:
+            download_enabled = bool(getattr(self.downloader, "download", True))
             for aweme_id in target_ids:
                 if status_map.get(aweme_id) not in (
                     "downloading",
@@ -2299,8 +2349,8 @@ class APIServer(TikTok):
                 ):
                     await self.database.update_douyin_work_upload(
                         aweme_id=aweme_id,
-                        status="pending",
-                        message="",
+                        status="downloading" if download_enabled else "pending",
+                        message="自动下载任务处理中" if download_enabled else "",
                     )
 
             details = []
@@ -2328,6 +2378,7 @@ class APIServer(TikTok):
                 )
             if detail_data:
                 await self.downloader.run(detail_data, "detail", tiktok=False)
+                await self._reconcile_work_status_from_download_record(target_ids)
         finally:
             for aweme_id in target_ids:
                 self._auto_downloading.discard(aweme_id)
@@ -2344,30 +2395,52 @@ class APIServer(TikTok):
             return
         self._auto_compensate_at = now
 
+        users_total = 0
+        users_pending = 0
+        works_pending = 0
+        users_processed = 0
+        reset_count = 0
+        error_text = ""
         stale_before = (
             now - timedelta(minutes=self.AUTO_ZOMBIE_TIMEOUT_MINUTES)
         ).strftime("%Y-%m-%d %H:%M:%S")
-        reset_count = await self.database.reset_stale_douyin_work_status(
-            stale_before=stale_before,
-            limit=self.AUTO_ZOMBIE_RESET_LIMIT,
-        )
-        if reset_count:
-            self.logger.info(_("已自动重置僵尸下载任务: %s") % reset_count)
+        try:
+            reset_count = await self.database.reset_stale_douyin_work_status(
+                stale_before=stale_before,
+                limit=self.AUTO_ZOMBIE_RESET_LIMIT,
+            )
+            if reset_count:
+                self.logger.info(_("已自动重置僵尸下载任务: %s") % reset_count)
 
-        users = await self.database.list_douyin_users_auto_update()
-        current_time = now.time()
-        for user in users:
-            sec_user_id = str(user.get("sec_user_id", "")).strip()
-            if not sec_user_id:
-                continue
-            start = user.get("update_window_start", "")
-            end = user.get("update_window_end", "")
-            if not self._within_window(start, end, current_time):
-                continue
-            pending = await self._list_user_pending_auto_download_works(sec_user_id)
-            if not pending:
-                continue
-            await self._auto_download_user_works(sec_user_id, pending)
+            users = await self.database.list_douyin_users_auto_update()
+            users_total = len(users)
+            # 自动补偿的目标是“排空积压任务”，不受时间窗口限制。
+            for user in users:
+                sec_user_id = str(user.get("sec_user_id", "")).strip()
+                if not sec_user_id:
+                    continue
+                pending = await self._list_user_pending_auto_download_works(sec_user_id)
+                if not pending:
+                    continue
+                users_pending += 1
+                works_pending += len(pending)
+                await self._auto_download_user_works(sec_user_id, pending)
+                users_processed += 1
+        except Exception as exc:
+            error_text = str(exc)
+            raise
+        finally:
+            self._auto_compensation_status = {
+                "last_run_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+                "last_force": bool(force),
+                "reset_count": int(reset_count or 0),
+                "users_total": int(users_total or 0),
+                "users_pending": int(users_pending or 0),
+                "works_pending": int(works_pending or 0),
+                "users_processed": int(users_processed or 0),
+                "running_downloading": len(self._auto_downloading),
+                "error": error_text,
+            }
 
     async def _run_user_auto_update_now(self, sec_user_id: str) -> None:
         if not sec_user_id:
@@ -3558,6 +3631,22 @@ class APIServer(TikTok):
             cookie_id: int, token: str = Depends(token_dependency)
         ):
             await self.database.delete_douyin_cookie(cookie_id)
+
+        @self.server.get(
+            "/admin/douyin/auto-download/status",
+            summary=_("获取自动下载补偿状态"),
+            tags=[_("管理")],
+            response_model=DataResponse,
+        )
+        async def get_auto_download_status(token: str = Depends(token_dependency)):
+            data = dict(self._auto_compensation_status)
+            data["download_enabled"] = bool(getattr(self.downloader, "download", True))
+            data["upload_enabled"] = self._upload_channel_enabled()
+            return DataResponse(
+                message=_("请求成功"),
+                data=data,
+                params=None,
+            )
 
         @self.server.get(
             "/admin/douyin/schedule",
