@@ -334,12 +334,19 @@
 </template>
 
 <script setup>
-import { computed, inject, onMounted, reactive, watch } from "vue";
+import { computed, inject, onBeforeUnmount, onMounted, reactive, watch } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 
 const apiRequest = inject("apiRequest");
 const setAlert = inject("setAlert");
 const route = useRoute();
+const USER_STREAM_REFRESH_DEBOUNCE_MS = 900;
+
+let userDetailStream = null;
+let userDetailStreamTimer = null;
+let userDetailStreamRefreshing = false;
+let userDetailStreamQueued = false;
+const userDetailStreamChanges = new Set();
 
 const state = reactive({
   user: {},
@@ -678,6 +685,108 @@ const getUploadText = (item) => {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const queueUserDetailStreamRefresh = (changed = []) => {
+  const list = Array.isArray(changed) ? changed : [];
+  list.forEach((item) => {
+    if (item) {
+      userDetailStreamChanges.add(String(item));
+    }
+  });
+  if (userDetailStreamTimer) {
+    return;
+  }
+  userDetailStreamTimer = window.setTimeout(async () => {
+    userDetailStreamTimer = null;
+    if (userDetailStreamRefreshing) {
+      userDetailStreamQueued = true;
+      return;
+    }
+    userDetailStreamRefreshing = true;
+    try {
+      const changedKeys = Array.from(userDetailStreamChanges);
+      userDetailStreamChanges.clear();
+      const needFull = changedKeys.length === 0 || changedKeys.includes("init");
+      const tasks = [];
+      if (needFull || changedKeys.includes("works") || changedKeys.includes("stats")) {
+        tasks.push(reloadWorks(true));
+      }
+      if (needFull || changedKeys.includes("live")) {
+        tasks.push(loadLiveCache(true));
+        tasks.push(loadUser(true));
+      } else if (changedKeys.includes("user")) {
+        tasks.push(loadUser(true));
+      }
+      if (needFull || changedKeys.includes("full_sync")) {
+        tasks.push(loadFullSyncProgress(true));
+      }
+      if (!tasks.length) {
+        return;
+      }
+      await Promise.all(tasks);
+    } finally {
+      userDetailStreamRefreshing = false;
+      if (userDetailStreamQueued || userDetailStreamChanges.size > 0) {
+        userDetailStreamQueued = false;
+        queueUserDetailStreamRefresh([]);
+      }
+    }
+  }, USER_STREAM_REFRESH_DEBOUNCE_MS);
+};
+
+const closeUserDetailStream = () => {
+  if (userDetailStream) {
+    userDetailStream.close();
+    userDetailStream = null;
+  }
+  if (userDetailStreamTimer) {
+    window.clearTimeout(userDetailStreamTimer);
+    userDetailStreamTimer = null;
+  }
+  userDetailStreamRefreshing = false;
+  userDetailStreamQueued = false;
+  userDetailStreamChanges.clear();
+};
+
+const startUserDetailStream = () => {
+  if (!userId.value || typeof EventSource === "undefined") {
+    return;
+  }
+  closeUserDetailStream();
+  const streamUrl = `/admin/douyin/users/${encodeURIComponent(userId.value)}/stream`;
+  const source = new EventSource(streamUrl);
+  userDetailStream = source;
+  source.addEventListener("ready", () => {
+    if (source !== userDetailStream) {
+      return;
+    }
+    queueUserDetailStreamRefresh(["init"]);
+  });
+  source.addEventListener("user_update", (event) => {
+    if (source !== userDetailStream) {
+      return;
+    }
+    let data = {};
+    try {
+      data = JSON.parse(event?.data || "{}");
+    } catch (error) {
+      data = {};
+    }
+    queueUserDetailStreamRefresh(data.changed || []);
+  });
+  source.addEventListener("removed", () => {
+    if (source !== userDetailStream) {
+      return;
+    }
+    queueUserDetailStreamRefresh(["init"]);
+  });
+  source.onerror = () => {
+    if (source !== userDetailStream) {
+      return;
+    }
+    // EventSource 会自动重连，这里不主动提示错误避免消息打扰。
+  };
+};
+
 const hasRunningOrPendingWorks = () =>
   state.works.items.some((item) => {
     const status = getUploadState(item);
@@ -707,14 +816,16 @@ const isToday = (item) => {
   return item.create_date === todayString();
 };
 
-const loadUser = async () => {
+const loadUser = async (silent = false) => {
   try {
     const data = await apiRequest(
       `/admin/douyin/users/${encodeURIComponent(userId.value)}`
     );
     state.user = data || {};
   } catch (error) {
-    setAlert("error", error.message);
+    if (!silent) {
+      setAlert("error", error.message);
+    }
   }
 };
 
@@ -735,14 +846,16 @@ const loadSettings = async () => {
   }
 };
 
-const loadFullSyncProgress = async () => {
+const loadFullSyncProgress = async (silent = false) => {
   try {
     const data = await apiRequest(
       `/admin/douyin/users/${encodeURIComponent(userId.value)}/full-sync`
     );
     state.fullSync = data.data || {};
   } catch (error) {
-    setAlert("error", error.message);
+    if (!silent) {
+      setAlert("error", error.message);
+    }
   }
 };
 
@@ -768,7 +881,7 @@ const loadWorkStats = async (silent = false) => {
   }
 };
 
-const loadWorks = async (page, append = false) => {
+const loadWorks = async (page, append = false, silent = false) => {
   if (!append) {
     state.works.loading = true;
   } else {
@@ -789,15 +902,17 @@ const loadWorks = async (page, append = false) => {
     state.works.items = append ? [...state.works.items, ...items] : items;
     state.works.page = page;
   } catch (error) {
-    setAlert("error", error.message);
+    if (!silent) {
+      setAlert("error", error.message);
+    }
   } finally {
     state.works.loading = false;
     state.works.loadingMore = false;
   }
 };
 
-const reloadWorks = async () => {
-  await Promise.all([loadWorks(1, false), loadWorkStats(true)]);
+const reloadWorks = async (silent = false) => {
+  await Promise.all([loadWorks(1, false, silent), loadWorkStats(true)]);
 };
 
 const loadMoreWorks = async () => {
@@ -814,7 +929,7 @@ const fetchLatestWorks = async () => {
   });
 };
 
-const loadLiveCache = async () => {
+const loadLiveCache = async (silent = false) => {
   try {
     const data = await apiRequest(
       `/admin/douyin/users/${encodeURIComponent(userId.value)}/live`
@@ -825,7 +940,9 @@ const loadLiveCache = async () => {
       await refreshLive();
       return;
     }
-    setAlert("error", error.message);
+    if (!silent) {
+      setAlert("error", error.message);
+    }
   }
 };
 
@@ -939,11 +1056,13 @@ onMounted(async () => {
   if (isFullSyncRunning.value) {
     await pollFullSyncProgress();
   }
+  startUserDetailStream();
 });
 
 watch(
   () => userId.value,
   async () => {
+    closeUserDetailStream();
     state.works.items = [];
     state.works.page = 1;
     state.workStats = {
@@ -963,6 +1082,11 @@ watch(
     await reloadWorks();
     await loadLiveCache();
     await loadFullSyncProgress();
+    startUserDetailStream();
   }
 );
+
+onBeforeUnmount(() => {
+  closeUserDetailStream();
+});
 </script>

@@ -1587,6 +1587,79 @@ class APIServer(TikTok):
             except asyncio.QueueFull:
                 continue
 
+    @staticmethod
+    def _build_user_stream_signature(snapshot: dict) -> str:
+        if not isinstance(snapshot, dict):
+            return ""
+        return json.dumps(
+            snapshot,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    @staticmethod
+    def _diff_user_stream_snapshot(previous: dict | None, current: dict) -> list[str]:
+        if not previous:
+            return ["init"]
+        changed = []
+        for key in ("live", "works", "stats", "full_sync", "user"):
+            if previous.get(key) != current.get(key):
+                changed.append(key)
+        return changed
+
+    async def _collect_user_stream_snapshot(self, sec_user_id: str) -> dict | None:
+        sec_user_id = str(sec_user_id or "").strip()
+        if not sec_user_id:
+            return None
+        user_row = await self.database.get_douyin_user(sec_user_id)
+        if not user_row:
+            return None
+        live_info = self._get_cached_live_info(sec_user_id) or {}
+        stats = await self.database.summarize_douyin_user_work_status(sec_user_id)
+        rows = await self.database.list_douyin_user_works(
+            sec_user_id,
+            page=1,
+            page_size=1,
+        )
+        latest = rows[0] if rows else {}
+        full_sync = self._init_user_full_sync_progress(sec_user_id)
+        return {
+            "user": {
+                "updated_at": str(user_row.get("updated_at") or ""),
+                "last_fetch_at": str(user_row.get("last_fetch_at") or ""),
+                "auto_update": bool(user_row.get("auto_update", 0)),
+            },
+            "live": {
+                "is_live": bool(user_row.get("is_live", 0)),
+                "last_live_at": str(user_row.get("last_live_at") or ""),
+                "live_status": bool(live_info.get("live_status")),
+                "web_rid": str(live_info.get("web_rid") or ""),
+                "room_id": str(live_info.get("room_id") or ""),
+            },
+            "works": {
+                "total": int(stats.get("total") or 0),
+                "latest_aweme_id": str(latest.get("aweme_id") or ""),
+                "latest_create_ts": int(latest.get("create_ts") or 0),
+                "latest_status": str(latest.get("upload_status") or ""),
+            },
+            "stats": {
+                "pending": int(stats.get("pending") or 0),
+                "downloading": int(stats.get("downloading") or 0),
+                "downloaded": int(stats.get("downloaded") or 0),
+                "uploading": int(stats.get("uploading") or 0),
+                "uploaded": int(stats.get("uploaded") or 0),
+                "failed": int(stats.get("failed") or 0),
+            },
+            "full_sync": {
+                "status": str(full_sync.get("status") or "idle"),
+                "updated_at": str(full_sync.get("updated_at") or ""),
+                "pages": int(full_sync.get("pages") or 0),
+                "works": int(full_sync.get("works") or 0),
+                "stored": int(full_sync.get("stored") or 0),
+            },
+        }
+
     async def _build_daily_feed_page(
         self,
         page: int,
@@ -2254,7 +2327,7 @@ class APIServer(TikTok):
             status = str(row.get("upload_status") or "").strip().lower()
             if status in ("downloaded", "uploaded", "uploading"):
                 continue
-            if not await self.recorder.has_id(aweme_id):
+            if not await self.downloader.recorder.has_id(aweme_id):
                 continue
             raw_local_path = str(row.get("local_path", "")).strip()
             local_file = self._resolve_local_cache_path(raw_local_path)
@@ -2289,7 +2362,7 @@ class APIServer(TikTok):
             if current_status == "uploaded":
                 continue
             if current_status in ("pending", "failed"):
-                if await self.recorder.has_id(aweme_id):
+                if await self.downloader.recorder.has_id(aweme_id):
                     await self.database.update_douyin_work_upload(
                         aweme_id=aweme_id,
                         status="downloaded",
@@ -3472,6 +3545,83 @@ class APIServer(TikTok):
                 message=_("请求成功"),
                 data=stats,
                 params={"sec_user_id": sec_user_id},
+            )
+
+        @self.server.get(
+            "/admin/douyin/users/{sec_user_id}/stream",
+            summary=_("订阅用户详情更新"),
+            tags=[_("管理")],
+        )
+        async def stream_douyin_user_detail(
+            sec_user_id: str,
+            request: Request,
+            token: str = Depends(token_dependency),
+        ):
+            sec_user_id = str(sec_user_id or "").strip()
+            if not sec_user_id:
+                raise HTTPException(status_code=400, detail=_("抖音用户不存在"))
+
+            async def event_generator():
+                previous_snapshot = None
+                previous_signature = ""
+                idle_rounds = 0
+                try:
+                    ready = json.dumps(
+                        {"interval_seconds": 4},
+                        ensure_ascii=False,
+                    )
+                    yield f"event: ready\ndata: {ready}\n\n"
+                    while True:
+                        if await request.is_disconnected():
+                            break
+                        snapshot = await self._collect_user_stream_snapshot(sec_user_id)
+                        if snapshot is None:
+                            payload = json.dumps(
+                                {"sec_user_id": sec_user_id, "removed": True},
+                                ensure_ascii=False,
+                            )
+                            yield f"event: removed\ndata: {payload}\n\n"
+                            break
+                        signature = self._build_user_stream_signature(snapshot)
+                        if signature != previous_signature:
+                            changed = self._diff_user_stream_snapshot(
+                                previous_snapshot,
+                                snapshot,
+                            )
+                            payload = json.dumps(
+                                {
+                                    "sec_user_id": sec_user_id,
+                                    "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    "changed": changed,
+                                },
+                                ensure_ascii=False,
+                            )
+                            yield f"event: user_update\ndata: {payload}\n\n"
+                            previous_signature = signature
+                            previous_snapshot = snapshot
+                            idle_rounds = 0
+                        else:
+                            idle_rounds += 1
+                            if idle_rounds >= 4:
+                                idle_rounds = 0
+                                yield "event: ping\ndata: {}\n\n"
+                        await asyncio.sleep(4)
+                except Exception:
+                    self.logger.error(_("用户详情 SSE 推送异常"), exc_info=True)
+                    payload = json.dumps(
+                        {"sec_user_id": sec_user_id, "error": "stream_error"},
+                        ensure_ascii=False,
+                    )
+                    yield f"event: error\ndata: {payload}\n\n"
+
+            return StreamingResponse(
+                event_generator(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
             )
 
         @self.server.get(

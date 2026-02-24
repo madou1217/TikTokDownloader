@@ -1,5 +1,6 @@
 from pathlib import Path
 from time import localtime, strftime
+import traceback
 from typing import TYPE_CHECKING
 
 from ..custom import (
@@ -79,21 +80,39 @@ class BaseLogger:
     def run(self, *args, **kwargs):
         pass
 
+    @staticmethod
+    def _normalize_console_kwargs(kwargs: dict) -> tuple[dict, bool]:
+        options = dict(kwargs or {})
+        exc_info = bool(options.pop("exc_info", False))
+        # 兼容 logging 风格参数，rich Console.print 不支持这些参数。
+        options.pop("stack_info", None)
+        options.pop("extra", None)
+        return options, exc_info
+
     def info(self, text: str, output=True, **kwargs):
         if output:
-            self.console.print(text, style=INFO, **kwargs)
+            options, _ = self._normalize_console_kwargs(kwargs)
+            self.console.print(text, style=INFO, **options)
 
     def warning(self, text: str, output=True, **kwargs):
         if output:
-            self.console.print(text, style=WARNING, **kwargs)
+            options, _ = self._normalize_console_kwargs(kwargs)
+            self.console.print(text, style=WARNING, **options)
 
     def error(self, text: str, output=True, **kwargs):
         if output:
-            self.console.print(text, style=ERROR, **kwargs)
+            options, exc_info = self._normalize_console_kwargs(kwargs)
+            if exc_info:
+                trace = traceback.format_exc()
+                if trace and trace.strip() and trace.strip() != "NoneType: None":
+                    text = f"{text}\n{trace}"
+            self.console.print(text, style=ERROR, **options)
 
     def debug(self, text: str, **kwargs):
         if self.DEBUG:
-            self.console.print(text, style=DEBUG, **kwargs)
+            options, _ = self._normalize_console_kwargs(kwargs)
+            self.console.print(text, style=DEBUG, **options)
 
     def print(self, text: str, style=GENERAL, **kwargs) -> None:
-        self.console.print(text, style=style, **kwargs)
+        options, _ = self._normalize_console_kwargs(kwargs)
+        self.console.print(text, style=style, **options)
