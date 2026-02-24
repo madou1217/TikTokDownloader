@@ -130,7 +130,7 @@ class Settings:
             "browser_version": "5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
             "language": "zh-Hans",
             "os": "windows",
-            "priority_region": "CN",
+            "priority_region": "US",
             "region": "US",
             "tz_name": "Asia/Shanghai",
             "webcast_language": "zh-Hans",

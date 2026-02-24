@@ -1,5 +1,4 @@
-from typing import TYPE_CHECKING
-from typing import Union
+from typing import TYPE_CHECKING, Union
 
 from src.interface.template import APITikTok
 from src.translation import _
@@ -69,7 +68,7 @@ class InfoTikTok(APITikTok):
     ) -> dict:
         return self.params | {
             "abTestVersion": "[object Object]",
-            "appType": "t",
+            "appType": "m",
             "secUid": self.sec_user_id,
             "uniqueId": self.unique_id,
             "user": "[object Object]",
@@ -80,6 +79,7 @@ async def test():
     from src.testers import Params
 
     async with Params() as params:
+        InfoTikTok.params["msToken"] = params.msToken_tiktok
         i = InfoTikTok(
             params,
             unique_id="",

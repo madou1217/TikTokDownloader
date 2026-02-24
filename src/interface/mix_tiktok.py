@@ -135,6 +135,8 @@ async def test():
     from src.testers import Params
 
     async with Params() as params:
+        MixTikTok.params["msToken"] = params.msToken_tiktok
+        MixListTikTok.params["msToken"] = params.msToken_tiktok
         # i = MixTikTok(
         #     params,
         #     mix_id="",

@@ -100,6 +100,13 @@ class API:
     ) -> dict:
         return self.params
 
+    def __generate_params(
+        self,
+    ) -> dict:
+        params = self.generate_params()
+        params["msToken"] = params.pop("msToken")
+        return params
+
     def generate_data(self, *args, **kwargs) -> dict:
         return {}
 
@@ -165,7 +172,7 @@ class API:
     ):
         if data := await self.request_data(
             self.api,
-            params=params() or self.generate_params(),
+            params=params() or self.__generate_params(),
             data=data() or self.generate_data(),
             method=method,
             headers=headers,
@@ -483,6 +490,7 @@ class API:
         if params:
             params = urlencode(
                 params,
+                safe="=",
                 quote_via=quote,
             )
             params += f"&a_bogus={self.ab.get_value(params, method)}"
@@ -564,6 +572,7 @@ class APITikTok(API):
         "data_collection_enabled": "true",
         "device_id": "",
         "device_platform": "web_pc",
+        "enable_cache": "true",
         "focus_state": "true",
         "from_page": "user",
         "history_len": "4",
@@ -571,9 +580,9 @@ class APITikTok(API):
         "is_page_visible": "true",
         "language": "en",
         "os": "windows",
-        "priority_region": "CN",
+        "priority_region": "US",
         "referer": "",
-        "region": "JP",
+        "region": "US",
         "screen_height": "864",
         "screen_width": "1536",
         "tz_name": "Asia/Shanghai",
@@ -631,6 +640,7 @@ class APITikTok(API):
         if params:
             params = urlencode(
                 params,
+                safe="=",
                 quote_via=quote,
             )
             xb = self.xb.get_x_bogus(
