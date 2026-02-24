@@ -109,6 +109,9 @@ class APIServer(TikTok):
     DOWNLOADABLE_WORK_TYPES = ("video", "note")
     USER_FULL_SYNC_PAGE_COUNT = 50
     USER_FULL_SYNC_MAX_PAGES = 500
+    AUTO_COMPENSATE_INTERVAL_SECONDS = 120
+    AUTO_ZOMBIE_TIMEOUT_MINUTES = 120
+    AUTO_ZOMBIE_RESET_LIMIT = 500
 
     def __init__(
         self,
@@ -130,6 +133,7 @@ class APIServer(TikTok):
         self._refresh_workers = []
         self._refresh_pending = set()
         self._orphan_cleanup_at = None
+        self._auto_compensate_at = None
         self._feed_subscribers = set()
         self._stream_cache = {}
         self._live_stream_prefixes = {}
@@ -819,6 +823,16 @@ class APIServer(TikTok):
             return int(datetime.strptime(value, "%Y-%m-%d %H:%M:%S").timestamp())
         except ValueError:
             return 0
+
+    @classmethod
+    def _is_status_stale(cls, status_updated_at: str, timeout_minutes: int) -> bool:
+        timeout_minutes = int(timeout_minutes or 0)
+        if timeout_minutes <= 0:
+            return True
+        status_ts = cls._parse_datetime_ts(status_updated_at)
+        if not status_ts:
+            return True
+        return (datetime.now().timestamp() - status_ts) >= timeout_minutes * 60
 
     @staticmethod
     def _resolve_client_ip(request: Request | None) -> str:
@@ -1977,6 +1991,7 @@ class APIServer(TikTok):
         total_pages = 0
         total_works = 0
         total_saved = 0
+        auto_update_enabled = False
         try:
             seed_items = [item for item in (seed_data or []) if self._is_work_item(item)]
             count, saved = await self._store_account_work_items(sec_user_id, seed_items)
@@ -2033,6 +2048,7 @@ class APIServer(TikTok):
 
             user_row = await self.database.get_douyin_user(sec_user_id)
             if user_row:
+                auto_update_enabled = bool(user_row.get("auto_update", 0))
                 has_works = bool(total_works > 0)
                 status = "active" if has_works else "no_works"
                 if (
@@ -2065,6 +2081,9 @@ class APIServer(TikTok):
                 finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 has_more=bool(has_more),
             )
+            # 历史全量同步是异步落库，若用户已开启自动下载，需在同步完成后再触发一次。
+            if auto_update_enabled:
+                self._trigger_user_auto_update_now(sec_user_id)
         except Exception as exc:
             error_text = str(exc)
             if len(error_text) > 200:
@@ -2218,11 +2237,24 @@ class APIServer(TikTok):
                 continue
             row = await self.database.get_douyin_work(aweme_id)
             current_status = (row.get("upload_status") or "").lower()
-            status_map[aweme_id] = current_status
             if current_status == "uploaded":
                 continue
             if aweme_id in self._auto_downloading:
                 continue
+            if current_status in ("downloading", "uploading"):
+                status_updated_at = str(row.get("status_updated_at") or "").strip()
+                if not self._is_status_stale(
+                    status_updated_at,
+                    self.AUTO_ZOMBIE_TIMEOUT_MINUTES,
+                ):
+                    continue
+                await self.database.update_douyin_work_upload(
+                    aweme_id=aweme_id,
+                    status="pending",
+                    message="自动补偿: 检测到超时僵尸任务，已重置",
+                )
+                current_status = "pending"
+            status_map[aweme_id] = current_status
             self._auto_downloading.add(aweme_id)
             target_ids.append(aweme_id)
 
@@ -2270,19 +2302,65 @@ class APIServer(TikTok):
             for aweme_id in target_ids:
                 self._auto_downloading.discard(aweme_id)
 
+    async def _run_auto_download_compensation(self, force: bool = False) -> None:
+        now = datetime.now()
+        if (
+            not force
+            and self._auto_compensate_at
+            and (
+                now - self._auto_compensate_at
+            ).total_seconds() < self.AUTO_COMPENSATE_INTERVAL_SECONDS
+        ):
+            return
+        self._auto_compensate_at = now
+
+        stale_before = (
+            now - timedelta(minutes=self.AUTO_ZOMBIE_TIMEOUT_MINUTES)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        reset_count = await self.database.reset_stale_douyin_work_status(
+            stale_before=stale_before,
+            limit=self.AUTO_ZOMBIE_RESET_LIMIT,
+        )
+        if reset_count:
+            self.logger.info(_("已自动重置僵尸下载任务: %s") % reset_count)
+
+        users = await self.database.list_douyin_users_auto_update()
+        current_time = now.time()
+        for user in users:
+            sec_user_id = str(user.get("sec_user_id", "")).strip()
+            if not sec_user_id:
+                continue
+            start = user.get("update_window_start", "")
+            end = user.get("update_window_end", "")
+            if not self._within_window(start, end, current_time):
+                continue
+            pending = await self._list_user_pending_auto_download_works(sec_user_id)
+            if not pending:
+                continue
+            await self._auto_download_user_works(sec_user_id, pending)
+
     async def _run_user_auto_update_now(self, sec_user_id: str) -> None:
         if not sec_user_id:
             return
-        latest = await self._refresh_user_latest(sec_user_id)
+        latest_items = []
+        try:
+            latest = await self._refresh_user_latest(sec_user_id)
+            latest_items = latest.get("items", [])
+        except Exception:
+            # 最新页拉取失败时，仍需继续处理历史 pending，避免自动下载整体失效。
+            self.logger.error(_("拉取用户最新作品失败，继续处理历史待下载作品"), exc_info=True)
         candidates = await self._collect_auto_download_works(
             sec_user_id,
-            latest.get("items", []),
+            latest_items,
         )
         await self._auto_download_user_works(
             sec_user_id,
             candidates,
         )
-        await self._refresh_user_live(sec_user_id)
+        try:
+            await self._refresh_user_live(sec_user_id)
+        except Exception:
+            self.logger.error(_("拉取直播状态失败"), exc_info=True)
 
     async def _run_user_auto_update_now_background(self, sec_user_id: str) -> None:
         try:
@@ -2434,9 +2512,13 @@ class APIServer(TikTok):
         while True:
             await asyncio.sleep(30)
             try:
+                await self._run_auto_download_compensation()
+            except Exception:
+                self.logger.error(_("自动下载补偿任务执行异常"), exc_info=True)
+            try:
                 await self._schedule_tick()
             except Exception:
-                self.logger.error(_("计划任务执行异常"))
+                self.logger.error(_("计划任务执行异常"), exc_info=True)
 
     async def _live_monitor_tick(self) -> None:
         if not self.live_recorder.enabled:
@@ -2537,6 +2619,7 @@ class APIServer(TikTok):
                 )
                 await self._live_monitor_tick()
             asyncio.create_task(self._bootstrap_auto_update_users())
+            asyncio.create_task(self._run_auto_download_compensation(force=True))
 
         @self.server.on_event("shutdown")
         async def shutdown_schedule():

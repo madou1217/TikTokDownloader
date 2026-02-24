@@ -121,6 +121,7 @@ class Database:
             local_path TEXT NOT NULL DEFAULT '',
             downloaded_at TEXT NOT NULL DEFAULT '',
             uploaded_at TEXT NOT NULL DEFAULT '',
+            status_updated_at TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL
             );"""
         )
@@ -215,12 +216,18 @@ class Database:
             "local_path": "TEXT NOT NULL DEFAULT ''",
             "downloaded_at": "TEXT NOT NULL DEFAULT ''",
             "uploaded_at": "TEXT NOT NULL DEFAULT ''",
+            "status_updated_at": "TEXT NOT NULL DEFAULT ''",
         }
         for name, ddl in work_columns.items():
             if name not in work_existing:
                 await self.database.execute(
                     f"ALTER TABLE douyin_work ADD COLUMN {name} {ddl};"
                 )
+        await self.database.execute(
+            """UPDATE douyin_work
+            SET status_updated_at=created_at
+            WHERE status_updated_at='';"""
+        )
         await self.cursor.execute("PRAGMA table_info(upload_data);")
         upload_existing = {row["name"] for row in await self.cursor.fetchall()}
         upload_columns = {
@@ -793,6 +800,7 @@ class Database:
                 END,
                 local_path=CASE WHEN ?!='' THEN ? ELSE local_path END,
                 upload_message=?,
+                status_updated_at=?,
                 downloaded_at=CASE
                     WHEN ?=1 THEN ?
                     WHEN downloaded_at='' AND ?='uploaded' THEN ?
@@ -815,6 +823,7 @@ class Database:
                 local_path or "",
                 local_path or "",
                 message or "",
+                now,
                 1 if mark_downloaded else 0,
                 now,
                 status or "",
@@ -854,8 +863,8 @@ class Database:
                 cover, play_count, width, height, work_type,
                 upload_status, upload_provider, upload_destination,
                 upload_origin_destination, upload_message, local_path,
-                downloaded_at, uploaded_at, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 'live', ?, ?, ?, ?, '', ?, ?, ?, ?)
+                downloaded_at, uploaded_at, status_updated_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 'live', ?, ?, ?, ?, '', ?, ?, ?, ?, ?)
             ON CONFLICT(aweme_id) DO UPDATE SET
                 sec_user_id=excluded.sec_user_id,
                 desc=excluded.desc,
@@ -871,7 +880,8 @@ class Database:
                 upload_origin_destination=excluded.upload_origin_destination,
                 local_path=excluded.local_path,
                 downloaded_at=excluded.downloaded_at,
-                uploaded_at=excluded.uploaded_at;""",
+                uploaded_at=excluded.uploaded_at,
+                status_updated_at=excluded.status_updated_at;""",
             (
                 sec_user_id,
                 aweme_id,
@@ -888,6 +898,7 @@ class Database:
                 local_path or "",
                 now,
                 uploaded_at or "",
+                now,
                 now,
             ),
         )
@@ -960,13 +971,40 @@ class Database:
             cover, play_count, width, height, work_type,
             upload_status, upload_provider, upload_destination,
             upload_origin_destination, upload_message, local_path,
-            downloaded_at, uploaded_at
+            downloaded_at, uploaded_at, status_updated_at
             FROM douyin_work
             WHERE aweme_id=?
             LIMIT 1;""",
             (aweme_id,),
         )
         return dict(row) if row else {}
+
+    async def reset_stale_douyin_work_status(
+        self,
+        stale_before: str,
+        limit: int = 500,
+    ) -> int:
+        if not stale_before:
+            return 0
+        limit = min(max(int(limit or 1), 1), 2000)
+        now = self._now_str()
+        cursor = await self.database.execute(
+            """UPDATE douyin_work
+            SET upload_status='pending',
+                upload_message='自动补偿: 检测到超时僵尸任务，已重置',
+                status_updated_at=?
+            WHERE aweme_id IN (
+                SELECT aweme_id
+                FROM douyin_work
+                WHERE upload_status IN ('downloading', 'uploading')
+                  AND COALESCE(NULLIF(status_updated_at, ''), created_at) <= ?
+                ORDER BY COALESCE(NULLIF(status_updated_at, ''), created_at) ASC
+                LIMIT ?
+            );""",
+            (now, stale_before, limit),
+        )
+        await self.database.commit()
+        return int(cursor.rowcount or 0)
 
     async def update_douyin_user_new(
         self,
@@ -1085,8 +1123,8 @@ class Database:
             cursor = await self.database.execute(
                 """INSERT INTO douyin_work (
                 sec_user_id, aweme_id, desc, create_ts, create_date,
-                cover, play_count, width, height, work_type, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                cover, play_count, width, height, work_type, status_updated_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(aweme_id) DO UPDATE SET
                     sec_user_id=excluded.sec_user_id,
                     desc=excluded.desc,
@@ -1108,6 +1146,7 @@ class Database:
                     int(item.get("width") or 0),
                     int(item.get("height") or 0),
                     item.get("work_type") or item.get("type") or "video",
+                    now,
                     now,
                 ),
             )
