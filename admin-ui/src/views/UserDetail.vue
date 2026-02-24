@@ -133,6 +133,27 @@
       <div>
         <h2>作品集</h2>
         <p class="muted">今日新增作品已标记“新”。</p>
+        <div class="works-summary">
+          <span class="works-summary-item total">总数 {{ workStatusSummary.total }}</span>
+          <span class="works-summary-item downloading">
+            下载中 {{ workStatusSummary.downloading }}
+          </span>
+          <span class="works-summary-item pending">未下载 {{ workStatusSummary.pending }}</span>
+          <span class="works-summary-item downloaded">已下载 {{ workStatusSummary.downloaded }}</span>
+          <span
+            v-if="isUploadEnabled"
+            class="works-summary-item uploading"
+          >
+            上传中 {{ workStatusSummary.uploading }}
+          </span>
+          <span
+            v-if="isUploadEnabled"
+            class="works-summary-item uploaded"
+          >
+            已上传 {{ workStatusSummary.uploaded }}
+          </span>
+          <span class="works-summary-item failed">失败 {{ workStatusSummary.failed }}</span>
+        </div>
       </div>
       <button class="ghost" :disabled="state.works.loading" @click="reloadWorks">
         刷新
@@ -284,7 +305,7 @@
             </span>
           </div>
           <a
-            v-if="item.upload_destination"
+            v-if="isUploadEnabled && item.upload_destination"
             class="work-upload-path"
             :href="item.upload_destination"
             target="_blank"
@@ -324,6 +345,15 @@ const state = reactive({
   user: {},
   liveInfo: {},
   fullSync: {},
+  workStats: {
+    total: 0,
+    pending: 0,
+    downloading: 0,
+    downloaded: 0,
+    uploading: 0,
+    uploaded: 0,
+    failed: 0,
+  },
   settings: {
     uploadEnabled: true,
   },
@@ -448,6 +478,35 @@ const fullSyncHint = computed(() => {
   return pieces.join(" | ");
 });
 const isUploadEnabled = computed(() => state.settings.uploadEnabled);
+const workStatusSummary = computed(() => {
+  const total = Number(state.workStats.total) || 0;
+  const pending = Number(state.workStats.pending) || 0;
+  const downloading = Number(state.workStats.downloading) || 0;
+  const downloaded = Number(state.workStats.downloaded) || 0;
+  const uploading = Number(state.workStats.uploading) || 0;
+  const uploaded = Number(state.workStats.uploaded) || 0;
+  const failed = Number(state.workStats.failed) || 0;
+  if (!isUploadEnabled.value) {
+    return {
+      total,
+      pending,
+      downloading,
+      downloaded: downloaded + uploading + uploaded,
+      uploading: 0,
+      uploaded: 0,
+      failed,
+    };
+  }
+  return {
+    total,
+    pending,
+    downloading,
+    downloaded,
+    uploading,
+    uploaded,
+    failed,
+  };
+});
 const clientUserUrl = computed(() => {
   if (!userId.value) {
     return "/client-ui/";
@@ -542,6 +601,9 @@ const getUploadState = (item) => {
     if (["uploaded", "uploading", "downloaded"].includes(status)) {
       return "downloaded";
     }
+    if (status === "downloading" || status === "failed") {
+      return status;
+    }
     return "pending";
   }
   if (["uploaded", "uploading", "downloading", "downloaded", "failed"].includes(status)) {
@@ -553,7 +615,16 @@ const getUploadState = (item) => {
 const getUploadTitle = (item) => {
   const status = getUploadState(item);
   if (!isUploadEnabled.value) {
-    return status === "downloaded" ? "已下载" : "未下载";
+    if (status === "downloaded") {
+      return "已下载";
+    }
+    if (status === "downloading") {
+      return "下载中";
+    }
+    if (status === "failed") {
+      return item?.upload_message || "下载失败";
+    }
+    return "未下载";
   }
   if (status === "uploaded") {
     return "上传完成";
@@ -576,7 +647,16 @@ const getUploadTitle = (item) => {
 const getUploadText = (item) => {
   const status = getUploadState(item);
   if (!isUploadEnabled.value) {
-    return status === "downloaded" ? "已下载" : "未下载";
+    if (status === "downloaded") {
+      return "已下载";
+    }
+    if (status === "downloading") {
+      return "下载中";
+    }
+    if (status === "failed") {
+      return "失败";
+    }
+    return "未下载";
   }
   if (status === "uploaded") {
     return "已上传";
@@ -658,6 +738,28 @@ const loadFullSyncProgress = async () => {
   }
 };
 
+const loadWorkStats = async (silent = false) => {
+  try {
+    const data = await apiRequest(
+      `/admin/douyin/users/${encodeURIComponent(userId.value)}/works/stats`
+    );
+    const stats = data?.data || {};
+    state.workStats = {
+      total: Number(stats.total) || 0,
+      pending: Number(stats.pending) || 0,
+      downloading: Number(stats.downloading) || 0,
+      downloaded: Number(stats.downloaded) || 0,
+      uploading: Number(stats.uploading) || 0,
+      uploaded: Number(stats.uploaded) || 0,
+      failed: Number(stats.failed) || 0,
+    };
+  } catch (error) {
+    if (!silent) {
+      setAlert("error", error.message);
+    }
+  }
+};
+
 const loadWorks = async (page, append = false) => {
   if (!append) {
     state.works.loading = true;
@@ -687,7 +789,7 @@ const loadWorks = async (page, append = false) => {
 };
 
 const reloadWorks = async () => {
-  await loadWorks(1, false);
+  await Promise.all([loadWorks(1, false), loadWorkStats(true)]);
 };
 
 const loadMoreWorks = async () => {
@@ -836,6 +938,15 @@ watch(
   async () => {
     state.works.items = [];
     state.works.page = 1;
+    state.workStats = {
+      total: 0,
+      pending: 0,
+      downloading: 0,
+      downloaded: 0,
+      uploading: 0,
+      uploaded: 0,
+      failed: 0,
+    };
     state.liveInfo = {};
     state.fullSync = {};
     state.showInfo = false;

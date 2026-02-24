@@ -112,6 +112,7 @@ class APIServer(TikTok):
     AUTO_COMPENSATE_INTERVAL_SECONDS = 120
     AUTO_ZOMBIE_TIMEOUT_MINUTES = 120
     AUTO_ZOMBIE_RESET_LIMIT = 500
+    AUTO_FAILED_RETRY_INTERVAL_MINUTES = 15
 
     def __init__(
         self,
@@ -2182,6 +2183,13 @@ class APIServer(TikTok):
             aweme_id = str(row.get("aweme_id", "")).strip()
             if not aweme_id:
                 continue
+            status = str(row.get("upload_status") or "").strip().lower()
+            status_updated_at = str(row.get("status_updated_at") or "").strip()
+            if status == "failed" and not self._is_status_stale(
+                status_updated_at,
+                self.AUTO_FAILED_RETRY_INTERVAL_MINUTES,
+            ):
+                continue
             work_type = row.get("work_type") or "video"
             if work_type not in self.DOWNLOADABLE_WORK_TYPES:
                 continue
@@ -2228,6 +2236,7 @@ class APIServer(TikTok):
             return
         target_ids = []
         status_map: dict[str, str] = {}
+        upload_enabled = self._upload_channel_enabled()
         for item in works:
             aweme_id = str(item.get("aweme_id", "")).strip()
             if not aweme_id:
@@ -2238,6 +2247,27 @@ class APIServer(TikTok):
             row = await self.database.get_douyin_work(aweme_id)
             current_status = (row.get("upload_status") or "").lower()
             if current_status == "uploaded":
+                continue
+            if not upload_enabled and current_status == "failed":
+                raw_local_path = str(row.get("local_path", "")).strip()
+                local_file = self._resolve_local_cache_path(raw_local_path)
+                if local_file and local_file.is_file():
+                    await self.database.update_douyin_work_upload(
+                        aweme_id=aweme_id,
+                        status="downloaded",
+                        local_path=str(local_file),
+                        message="自动补偿: 上传未启用，检测到本地文件，已标记为已下载",
+                        mark_downloaded=True,
+                    )
+                    continue
+            if not upload_enabled and current_status in ("uploading", "downloaded"):
+                if current_status == "uploading":
+                    await self.database.update_douyin_work_upload(
+                        aweme_id=aweme_id,
+                        status="downloaded",
+                        message="自动补偿: 上传未启用，已标记为已下载",
+                        mark_downloaded=True,
+                    )
                 continue
             if aweme_id in self._auto_downloading:
                 continue
@@ -3343,6 +3373,23 @@ class APIServer(TikTok):
             )
             items = [self._build_work_from_row(row) for row in rows]
             return DouyinWorkListPage(total=total, items=items)
+
+        @self.server.get(
+            "/admin/douyin/users/{sec_user_id}/works/stats",
+            summary=_("获取抖音用户作品状态统计"),
+            tags=[_("管理")],
+            response_model=DataResponse,
+        )
+        async def get_douyin_user_works_stats(
+            sec_user_id: str,
+            token: str = Depends(token_dependency),
+        ):
+            stats = await self.database.summarize_douyin_user_work_status(sec_user_id)
+            return DataResponse(
+                message=_("请求成功"),
+                data=stats,
+                params={"sec_user_id": sec_user_id},
+            )
 
         @self.server.get(
             "/admin/douyin/users/{sec_user_id}/latest",

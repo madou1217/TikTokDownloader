@@ -1307,7 +1307,7 @@ class Database:
             return []
         limit = min(max(int(limit or 1), 1), 500)
         rows = await self._query_all(
-            """SELECT aweme_id, work_type, upload_status
+            """SELECT aweme_id, work_type, upload_status, status_updated_at
             FROM douyin_work
             WHERE sec_user_id=?
               AND (upload_status='' OR upload_status='pending' OR upload_status='failed')
@@ -1316,6 +1316,76 @@ class Database:
             (sec_user_id, limit),
         )
         return [dict(i) for i in rows]
+
+    async def summarize_douyin_user_work_status(self, sec_user_id: str) -> dict:
+        sec_user_id = (sec_user_id or "").strip()
+        if not sec_user_id:
+            return {
+                "total": 0,
+                "pending": 0,
+                "downloading": 0,
+                "downloaded": 0,
+                "uploading": 0,
+                "uploaded": 0,
+                "failed": 0,
+            }
+        row = await self._query_one(
+            """SELECT
+                COUNT(1) AS total,
+                SUM(CASE
+                    WHEN status='downloading' THEN 1
+                    ELSE 0
+                END) AS downloading,
+                SUM(CASE
+                    WHEN status='downloaded' THEN 1
+                    ELSE 0
+                END) AS downloaded,
+                SUM(CASE
+                    WHEN status='uploading' THEN 1
+                    ELSE 0
+                END) AS uploading,
+                SUM(CASE
+                    WHEN status='uploaded' THEN 1
+                    ELSE 0
+                END) AS uploaded,
+                SUM(CASE
+                    WHEN status='failed' THEN 1
+                    ELSE 0
+                END) AS failed,
+                SUM(CASE
+                    WHEN status='' OR status='pending'
+                         OR status NOT IN (
+                            'downloading', 'downloaded', 'uploading', 'uploaded', 'failed'
+                         ) THEN 1
+                    ELSE 0
+                END) AS pending
+            FROM (
+                SELECT LOWER(TRIM(COALESCE(w.upload_status, ''))) AS status
+                FROM douyin_work w
+                JOIN douyin_user u ON w.sec_user_id = u.sec_user_id
+                WHERE w.sec_user_id=?
+            ) AS works;""",
+            (sec_user_id,),
+        )
+        if not row:
+            return {
+                "total": 0,
+                "pending": 0,
+                "downloading": 0,
+                "downloaded": 0,
+                "uploading": 0,
+                "uploaded": 0,
+                "failed": 0,
+            }
+        return {
+            "total": int(row.get("total") or 0),
+            "pending": int(row.get("pending") or 0),
+            "downloading": int(row.get("downloading") or 0),
+            "downloaded": int(row.get("downloaded") or 0),
+            "uploading": int(row.get("uploading") or 0),
+            "uploaded": int(row.get("uploaded") or 0),
+            "failed": int(row.get("failed") or 0),
+        }
 
     async def count_douyin_works_all(self) -> int:
         row = await self._query_one("SELECT COUNT(1) AS total FROM douyin_work;")
