@@ -698,10 +698,10 @@ class APIServer(TikTok):
         for name in Browser.supported_browser_names():
             if preferred and name.lower() == preferred:
                 continue
-            fallback_cookies, _ = reader.get_with_detail(
+            fallback_cookies = reader.get_with_detail(
                 name,
                 list(self.DOUYIN_COOKIE_DOMAINS),
-            )
+            )[0]
             if fallback_cookies:
                 self.logger.warning(
                     _("指定浏览器未读取到 Cookie，已自动从 {browser} 读取").format(
